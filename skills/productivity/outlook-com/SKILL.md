@@ -59,15 +59,36 @@ taskkill /F /IM OUTLOOK.EXE 2>nul
 
 ## Step 2: Run the search script
 
-The script takes a keyword as argument and searches ALL inbox subfolders:
+The script supports three parameters:
+
+| Parameter | Description |
+|-----------|-------------|
+| `-Keyword` | Search by subject substring |
+| `-Days` | Only show mail from last N days (1=24h, 3=3days) |
+| `-Folder` | Limit to specific inbox subfolder |
 
 ```bash
 # WSL
-/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe \
-  -ExecutionPolicy Bypass -File "C:\Users\<username>\outlook-search.ps1" "KEYWORD" 2>&1
+powershell.exe -ExecutionPolicy Bypass -File "C:\Users\<username>\outlook-search.ps1" -Keyword "KEYWORD" -Days 1
 
 # Pure Windows (via .cmd)
-cmd /c "%USERPROFILE%\outlook-search.cmd KEYWORD"
+cmd /c "%USERPROFILE%\outlook-search.cmd -Keyword KEYWORD -Days 1"
+```
+
+**Common patterns:**
+
+```bash
+# Search by keyword (all time)
+"C:\Users\shein\outlook-search.cmd" -Keyword "114-2"
+
+# Last 24 hours, all mail
+"C:\Users\shein\outlook-search.cmd" -Days 1
+
+# Last 3 days, keyword search
+"C:\Users\shein\outlook-search.cmd" -Keyword "法規" -Days 3
+
+# Specific folder, last 24h
+"C:\Users\shein\outlook-search.cmd" -Folder "02-圖資中心" -Days 1
 ```
 
 **CRITICAL: Use the user's exact original string as the search keyword.** Do NOT
