@@ -1,6 +1,7 @@
+﻿
 # outlook-search.ps1 - Search Outlook inbox by keyword
 # Usage: powershell.exe -ExecutionPolicy Bypass -File outlook-search.ps1 "keyword"
-# Output: C:\Users\<username>\search-result.txt (UTF-8)
+# Output: %USERPROFILE%\search-result.txt (UTF-8)
 
 param(
     [string]$Keyword = ""
@@ -8,8 +9,24 @@ param(
 
 if ($Keyword -eq "") {
     Write-Host "Usage: outlook-search.ps1 <keyword>"
-    Write-Host "Example: outlook-search.ps1 '法规汇编'"
     exit 1
+}
+
+# Check and kill Outlook
+$proc = Get-Process -Name "OUTLOOK" -ErrorAction SilentlyContinue
+if ($proc) {
+    Write-Host "Killing Outlook..."
+    $proc | Stop-Process -Force
+    Start-Sleep -Seconds 3
+    # Verify
+    $proc2 = Get-Process -Name "OUTLOOK" -ErrorAction SilentlyContinue
+    if ($proc2) {
+        Write-Host "WARNING: Outlook still running"
+        exit 1
+    }
+    Write-Host "Outlook closed."
+} else {
+    Write-Host "Outlook not running."
 }
 
 $outlook = New-Object -ComObject Outlook.Application
@@ -21,9 +38,7 @@ if ($account -eq $null) {
 }
 
 $inbox = $account.Folders | Where-Object { $_.Name -eq "收件匣" -or $_.Name -eq "收件箱" -or $_.Name -eq "Inbox" } | Select-Object -First 1
-if ($inbox -eq $null) {
-    $inbox = $account.Folders | Select-Object -First 1
-}
+if ($inbox -eq $null) { $inbox = $account.Folders | Select-Object -First 1 }
 
 $lines = @()
 $lines += "Search: $Keyword"
@@ -47,7 +62,7 @@ foreach ($sub in $inbox.Folders) {
             $lines += "Subject: $($item.Subject)"
             if ($item.Body) {
                 $b = $item.Body.Substring(0, [Math]::Min(1000, $item.Body.Length))
-                $lines += "Body: $($b -replace \"`r`n\", ' | ')"
+                $lines += "Body: $($b -replace "`r`n", ' | ')"
             }
             $lines += ""
         }
@@ -56,5 +71,7 @@ foreach ($sub in $inbox.Folders) {
 
 $lines += "-----"
 $lines += "Searched $folderCount folders, found $found match(es)"
-[System.IO.File]::WriteAllLines("C:\Users\$env:USERNAME\search-result.txt", $lines, [System.Text.Encoding]::UTF8)
+$resultPath = Join-Path $env:USERPROFILE "search-result.txt"
+[System.IO.File]::WriteAllLines($resultPath, $lines, [System.Text.Encoding]::UTF8)
 Write-Host "Done: $found match(es) in $folderCount folders"
+Write-Host "Results: $resultPath"

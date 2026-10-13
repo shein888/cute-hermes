@@ -34,13 +34,17 @@ Copy the bundled scripts to `C:\Users\<username>\`:
 | `outlook-search.ps1` | Core search logic (PowerShell) |
 | `outlook-search.cmd` | Windows command-line wrapper |
 
-**No WSL needed.** The `.cmd` works in any Windows `cmd.exe` or PowerShell:
+**No WSL needed.** The `.cmd` works in any Windows `cmd.exe` or PowerShell.
+Use `%USERPROFILE%` instead of hardcoding the username path:
 
 ```
-C:\Users\shein> outlook-search.cmd "114-2"
+cmd /c "%USERPROFILE%\outlook-search.cmd 114-2"
 ```
 
 The `.sh` wrapper (`outlook-search.sh`) is optional — only for WSL users.
+
+**IMPORTANT: Replace `<username>` with the actual Windows username on the target PC.**
+Use `%USERPROFILE%` (Windows) or `$env:USERNAME` (PowerShell) — never hardcode a username.
 
 ## Step 1: Kill Outlook
 
@@ -63,7 +67,7 @@ The script takes a keyword as argument and searches ALL inbox subfolders:
   -ExecutionPolicy Bypass -File "C:\Users\<username>\outlook-search.ps1" "KEYWORD" 2>&1
 
 # Pure Windows (via .cmd)
-cmd /c "C:\Users\shein\outlook-search.cmd KEYWORD"
+cmd /c "%USERPROFILE%\outlook-search.cmd KEYWORD"
 ```
 
 **CRITICAL: Use the user's exact original string as the search keyword.** Do NOT
