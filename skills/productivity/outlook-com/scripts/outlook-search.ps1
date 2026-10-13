@@ -33,6 +33,13 @@ $outlook = New-Object -ComObject Outlook.Application
 $ns = $outlook.GetNamespace('MAPI')
 $account = $ns.Folders | Where-Object { $_.Name -like "*@*" } | Select-Object -First 1
 if ($account -eq $null) {
+    # Fallback: use Outlook root folder
+    $account = $ns.Folders | Where-Object { $_.Name -eq "Outlook" -or $_.Name -eq "Microsoft Exchange" } | Select-Object -First 1
+    if ($account -eq $null) {
+        $account = $ns.Folders | Select-Object -First 1
+    }
+}
+if ($account -eq $null) {
     Write-Host "ERROR: No account folder found"
     exit 1
 }
@@ -62,7 +69,7 @@ foreach ($sub in $inbox.Folders) {
             $lines += "Subject: $($item.Subject)"
             if ($item.Body) {
                 $b = $item.Body.Substring(0, [Math]::Min(1000, $item.Body.Length))
-                $lines += "Body: $($b -replace "`r`n", ' | ')"
+                $lines += 'Body: ' + ($b -replace [char]13 + [char]10, ' | ')
             }
             $lines += ""
         }
