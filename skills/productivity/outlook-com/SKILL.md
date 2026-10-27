@@ -1,7 +1,7 @@
 ---
 name: outlook-com
 description: "Read Outlook mail via PowerShell COM (MAPI). Use when the user asks to read, search, or summarize their Outlook inbox, or mentions reading Outlook emails. Works with WSL or pure Windows."
-version: 2.0.0
+version: 3.0.0
 author: shein
 platforms: [windows, wsl]
 metadata:
@@ -34,6 +34,14 @@ Copy the bundled scripts to `C:\Users\<username>\`:
 | `outlook-search.ps1` | Core search logic (PowerShell) |
 | `outlook-search.cmd` | Windows command-line wrapper |
 
+**v3.0.0 changes:**
+- **FIX: Inbox root items are now searched** — v2.0 only scanned subfolders, missing mails sitting directly in the inbox
+- **NEW: `-Sender` parameter** — search by sender email/name (partial match)
+- **NEW: `-Date` parameter** — exact date filter (yyyy-MM-dd)
+- **NEW: `-Recursive` switch** — search ALL folders recursively (account-wide)
+- **FIX: Encoding** — uses `[string]` cast on COM properties to avoid `System.__ComObject` display issues
+- **NEW: Scanned item count** — result file now shows how many items were actually scanned
+
 **No WSL needed.** The `.cmd` works in any Windows `cmd.exe` or PowerShell.
 Use `%USERPROFILE%` instead of hardcoding the username path:
 
@@ -59,13 +67,16 @@ taskkill /F /IM OUTLOOK.EXE 2>nul
 
 ## Step 2: Run the search script
 
-The script supports three parameters:
+The script supports six parameters:
 
 | Parameter | Description |
 |-----------|-------------|
 | `-Keyword` | Search by subject substring |
+| `-Sender` | Search by sender email/name (partial match) |
+| `-Date` | Exact date filter (yyyy-MM-dd) |
 | `-Days` | Only show mail from last N days (1=24h, 3=3days) |
 | `-Folder` | Limit to specific inbox subfolder |
+| `-Recursive` | Search ALL folders recursively (slower) |
 
 ```bash
 # WSL
@@ -81,6 +92,13 @@ cmd /c "%USERPROFILE%\outlook-search.cmd -Keyword KEYWORD -Days 1"
 # Search by keyword (all time)
 "C:\Users\shein\outlook-search.cmd" -Keyword "114-2"
 
+# Search by sender (partial match works)
+"C:\Users\shein\outlook-search.cmd" -Sender "prac@cute.edu.tw"
+"C:\Users\shein\outlook-search.cmd" -Sender "prac"
+
+# Search by sender + specific date
+"C:\Users\shein\outlook-search.cmd" -Sender "prac" -Date "2026-10-16"
+
 # Last 24 hours, all mail
 "C:\Users\shein\outlook-search.cmd" -Days 1
 
@@ -89,9 +107,18 @@ cmd /c "%USERPROFILE%\outlook-search.cmd -Keyword KEYWORD -Days 1"
 
 # Specific folder, last 24h
 "C:\Users\shein\outlook-search.cmd" -Folder "02-圖資中心" -Days 1
+
+# Search ALL folders recursively (use when you don't know which folder)
+"C:\Users\shein\outlook-search.cmd" -Keyword "test" -Recursive
+"C:\Users\shein\outlook-search.cmd" -Sender "prac" -Date "2026-10-16" -Recursive
 ```
 
-**CRITICAL: Use the user's exact original string as the search keyword.** Do NOT
+**CRITICAL: Search the inbox root items, not just subfolders.**
+The default mode now scans both the inbox root AND its subfolders. Previously
+it only scanned subfolders, which meant mails sitting directly in the inbox
+were missed. Use `-Recursive` to expand to ALL folders (account-wide).
+
+**IMPORTANT: Use the user's exact original string as the search keyword.** Do NOT
 split it into smaller keywords or guess. If the user says "檢核114-2、115-1全校
 法規彙編作業", search for a distinctive substring like `"114-2"` — the user's
 string will still match via `.Contains()`. Subjects often have prefixes ("FW:",
@@ -181,7 +208,7 @@ $items = $inbox.Items.Restrict("[SenderEmailAddress] = 'someone@example.com'")
 
 3. **Folder names vary by locale** — 收件匣 (tw), 收件箱 (zh-cn), Inbox (en). Try multiple names or just take the first folder.
 
-4. **Large inboxes** — always use `Restrict()` filter. Iterating 13k+ items takes 60+ seconds.
+4. **Large inboxes** — use `-Date` or `-Days` filter to narrow the search. Iterating 3k+ items in a single folder takes 30+ seconds; `-Recursive` on all folders takes 60-120 seconds.
 
 5. **Timeout** — first COM call takes 10-30s (Outlook loads MAPI profile). Set `timeout=120`.
 
