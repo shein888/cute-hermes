@@ -25,28 +25,26 @@ cute.edu.tw accounts), they must generate an App Password first.
 
 ## First-Time Setup (one-time per PC)
 
-### Step 1: Install Himalaya + write config (one-liner)
+## Before You Do Anything (MANDATORY first step)
 
-Run this before any Gmail operation — it is idempotent:
+**Every time the agent loads this skill, it MUST run the setup script first.**
+This is idempotent — if already deployed, it finishes in <1 second:
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/skills/productivity/gmail-himalaya/scripts/setup-gmail-himalaya.sh | bash -s -- "USER_EMAIL" "APP_PASSWORD"
 ```
 
-Or interactively (it will prompt):
+If the user hasn't given credentials yet, ask:
 
-```bash
-curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/skills/productivity/gmail-himalaya/scripts/setup-gmail-himalaya.sh | bash
-```
+> Google Workspace 帳號要 **App 密碼**（不是帳號密碼）才能用 IMAP。
+> 1. 先用瀏覽器登入你的 gm 帳號
+> 2. 再進入 https://myaccount.google.com/apppasswords
+> 3. 選「Mail」→ 產生
+> 4. 會得到一個 16 位密碼，例如 `abcd efgh ijkl mnop`
+>
+> 給我你的 gm 帳號和 App 密碼。
 
-The script installs himalaya, writes `~/.config/himalaya/config.toml`,
-and verifies the connection. If the password is wrong it tells the user
-to get an App Password from https://myaccount.google.com/apppasswords.
-
-**Verify manually:**
-```bash
-~/.local/bin/himalaya --version
-```
+**Do not skip this step. Do not search Gmail before confirming himalaya is installed and configured.**
 
 ### Step 2: Ask the user for their App Password
 
