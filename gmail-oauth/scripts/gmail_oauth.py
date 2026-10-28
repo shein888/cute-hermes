@@ -22,15 +22,59 @@ from pathlib import Path
 from datetime import datetime
 
 # ─── Config ───────────────────────────────────────────────────────────────
-CLIENT_ID = os.environ.get("GMAIL_OAUTH_CLIENT_ID", "930386946858-3d63m2dmik1caej2cam2c4mtnp83b9jh.apps.googleusercontent.com")
-CLIENT_SECRET = os.environ.get("GMAIL_OAUTH_CLIENT_SECRET", "")
+def _get_client_credentials():
+    """Read credentials from env vars or ~/.config/gmail-oauth/env."""
+    client_id = os.environ.get("GMAIL_OAUTH_CLIENT_ID", "")
+    client_secret = os.environ.get("GMAIL_OAUTH_CLIENT_SECRET", "")
+
+    # Fallback: read from env file
+    env_file = Path.home() / ".config" / "gmail-oauth" / "env"
+    if (not client_id or not client_secret) and env_file.exists():
+        for line in env_file.read_text().splitlines():
+            line = line.strip()
+            if line.startswith("export GMAIL_OAUTH_CLIENT_ID="):
+                client_id = line.split("=", 1)[1].strip('"')
+            elif line.startswith("export GMAIL_OAUTH_CLIENT_SECRET="):
+                client_secret = line.split("=", 1)[1].strip('"')
+
+    return client_id, client_secret
+
+
+CLIENT_ID, CLIENT_SECRET = _get_client_credentials()
 SCOPES = "https://www.googleapis.com/auth/gmail.modify"
-REDIRECT_URI = "http://localhost:8080"
+REDIRECT_URI = os.environ.get("GMAIL_OAUTH_REDIRECT", "urn:ietf:wg:oauth:2.0:oob")
 TOKEN_FILE = Path.home() / ".config" / "gmail-oauth" / "token.json"
 API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
 
 
 # ─── Token helpers ────────────────────────────────────────────────────────
+def _exchange_code(code):
+    """Exchange an authorization code for a token and save it."""
+    data = urllib.parse.urlencode({
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+        "code": code,
+        "grant_type": "authorization_code",
+        "redirect_uri": REDIRECT_URI,
+    }).encode()
+    req = urllib.request.Request(
+        "https://oauth2.googleapis.com/token",
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    with urllib.request.urlopen(req) as resp:
+        token = json.loads(resp.read())
+
+    token["expires_at"] = datetime.now().timestamp() + token.get("expires_in", 3600)
+    save_token(token)
+    print(f"\n[OK] Token saved to {TOKEN_FILE}")
+    print(f"   Expires in {token.get('expires_in', 'unknown')}s")
+    if token.get("refresh_token"):
+        print("   Refresh token saved (auto-refreshes forever)")
+    else:
+        print("   WARNING: No refresh token received. Token will expire.")
+
+
 def load_token():
     if TOKEN_FILE.exists():
         with open(TOKEN_FILE) as f:
@@ -107,8 +151,19 @@ def oauth_setup():
     })
     auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{params}"
 
-    print(f"\nOpening browser for Google sign-in...")
-    print(f"URL: {auth_url}\n")
+    print(f"\nOpen this URL in your browser:\n")
+    print(auth_url)
+    print()
+
+    if REDIRECT_URI.startswith("urn:"):
+        print("After clicking 'Allow', the page will show an 'Authorization Code'.")
+        print("Copy that code and paste it below.\n")
+        code = input("Authorization Code: ").strip()
+        if not code:
+            print("No code entered.", file=sys.stderr)
+            sys.exit(1)
+        _exchange_code(code)
+        return
 
     # Try to open browser
     import webbrowser
@@ -155,30 +210,8 @@ def oauth_setup():
         print("No code received. Timed out.", file=sys.stderr)
         sys.exit(1)
 
-    # Exchange code for token
-    data = urllib.parse.urlencode({
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "code": captured["code"],
-        "grant_type": "authorization_code",
-        "redirect_uri": REDIRECT_URI,
-    }).encode()
-    req = urllib.request.Request(
-        "https://oauth2.googleapis.com/token",
-        data=data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-    )
-    with urllib.request.urlopen(req) as resp:
-        token = json.loads(resp.read())
-
-    token["expires_at"] = datetime.now().timestamp() + token.get("expires_in", 3600)
-    save_token(token)
-    print(f"\n[OK] Token saved to {TOKEN_FILE}")
-    print(f"   Expires in {token.get('expires_in', 'unknown')}s")
-    if token.get("refresh_token"):
-        print("   Refresh token saved (auto-refreshes forever)")
-    else:
-        print("   WARNING: No refresh token received. Token will expire.")
+    code = captured["code"]
+    _exchange_code(code)
 
 
 # ─── API calls ───────────────────────────────────────────────────────────
