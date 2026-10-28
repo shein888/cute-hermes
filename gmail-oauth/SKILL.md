@@ -101,23 +101,47 @@ python3 ~/gmail_oauth.py status
 
 ## Setup (first time only)
 
+Each gm 帳號 only needs to authorize **once**. After that, the token
+auto-refreshes forever (refresh_token). No more browser, no more URL.
+
 The OAuth Client ID/Secret are **NOT stored in the repo** (GitHub secret
-scanning blocks them). The setup script asks the user for them once and
-saves to `~/.config/gmail-oauth/env`.
+scanning blocks them). They go in `~/.config/gmail-oauth/env`.
 
-The user just needs to:
+### Normal flow (browser and server on the same machine)
 
-1. Run the setup script (asks for Client ID/Secret, then opens browser)
-2. Sign in to their Google account
-3. Click "Allow"
+1. Run the setup script or `python3 ~/gmail_oauth.py setup`
+2. Browser opens automatically → sign in → click "Allow"
+3. Browser redirects to `http://localhost:8080/?code=...` → "Gmail OAuth complete!"
 4. Done — token saved, auto-refreshes forever
 
-No App Password. No 2FA requirement. No IMAP/SMTP config.
+### WSL flow (browser on Windows, server in WSL)
 
-**For the agent:** If the user's PC doesn't have the credentials yet,
-ask them for the `GMAIL_OAUTH_CLIENT_ID` and `GMAIL_OAUTH_CLIENT_SECRET`
-from their Google Cloud Console project, then write them to
-`~/.config/gmail-oauth/env`:
+WSL2's localhost forwards to Windows, so `webbrowser.open()` may open the
+URL in Windows Chrome. After clicking "Allow", the browser redirects to
+`http://localhost:8080/?code=...` — if the WSL server already closed, the
+page shows "Cannot locate document" or "404". That's fine.
+
+**The user just copies the full URL from the browser address bar and pastes
+it back to the agent.** The agent runs:
+
+```bash
+python3 ~/gmail_oauth.py import-code 'http://localhost:8080/?code=...'
+```
+
+This is a **one-time** action during setup. After the token is saved, no
+more URL pasting is ever needed.
+
+### What the user actually does (per gm 帳號, one time)
+
+1. Agent gives them a URL (or browser opens it)
+2. Open in Chrome → sign in to their gm account → click "Allow"
+3. If page loads → done. If page shows error → copy the URL from the
+   address bar and paste it back
+4. **Done forever** — no more browser, no more URL
+
+### Agent setup checklist
+
+If the user's PC doesn't have the credentials yet:
 
 ```bash
 mkdir -p ~/.config/gmail-oauth
@@ -129,6 +153,12 @@ chmod 600 ~/.config/gmail-oauth/env
 source ~/.config/gmail-oauth/env
 python3 ~/gmail_oauth.py setup
 ```
+
+If browser callback fails (WSL / remote), tell the user to open the
+printed URL in Chrome, authorize, then paste the callback URL back.
+Run `import-code` with that URL.
+
+No App Password. No 2FA requirement. No IMAP/SMTP config.
 
 ## Pitfalls
 
