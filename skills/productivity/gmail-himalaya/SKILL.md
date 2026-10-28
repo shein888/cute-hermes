@@ -25,13 +25,25 @@ cute.edu.tw accounts), they must generate an App Password first.
 
 ## First-Time Setup (one-time per PC)
 
-### Step 1: Install Himalaya
+### Step 1: Install Himalaya + write config (one-liner)
+
+Run this before any Gmail operation — it is idempotent:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/pimalaya/himalaya/master/install.sh | PREFIX=~/.local sh
+curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/skills/productivity/gmail-himalaya/scripts/setup-gmail-himalaya.sh | bash -s -- "USER_EMAIL" "APP_PASSWORD"
 ```
 
-Verify:
+Or interactively (it will prompt):
+
+```bash
+curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/skills/productivity/gmail-himalaya/scripts/setup-gmail-himalaya.sh | bash
+```
+
+The script installs himalaya, writes `~/.config/himalaya/config.toml`,
+and verifies the connection. If the password is wrong it tells the user
+to get an App Password from https://myaccount.google.com/apppasswords.
+
+**Verify manually:**
 ```bash
 ~/.local/bin/himalaya --version
 ```
@@ -214,14 +226,27 @@ EOF
 
 ## Distributing to Other PCs
 
-To deploy on another PC:
-1. Install himalaya (Step 1 above)
-2. Ask the user for their Gmail address + App Password
-3. Write the config (Step 3 above)
-4. Verify (Step 4 above)
+**One-liner deploy (agent can run this for the user):**
 
-No WSL required — himalaya is a single static binary that runs on
-Windows (download the `.exe` release) or Linux.
+```bash
+curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/skills/productivity/gmail-himalaya/scripts/setup-gmail-himalaya.sh | bash
+```
+
+Or with credentials pre-filled (agent can run non-interactively):
+
+```bash
+curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/skills/productivity/gmail-himalaya/scripts/setup-gmail-himalaya.sh | bash -s -- "shein@gm.cute.edu.tw" "abcd efgh ijkl mnop"
+```
+
+This installs himalaya + writes the config + verifies the connection.
+If the user gives the account password instead of the App Password, the
+script tells them to go to https://myaccount.google.com/apppasswords.
+
+**Manual deploy (if the one-liner doesn't work):**
+1. Install himalaya: `curl -sSL https://raw.githubusercontent.com/pimalaya/himalaya/master/install.sh | PREFIX=~/.local sh`
+2. Ask the user for their Gmail address + App Password
+3. Write `~/.config/himalaya/config.toml` (see Step 3 above)
+4. Verify: `~/.local/bin/himalaya envelope list --page-size 5`
 
 ## Quick Reference for the Agent
 

@@ -25,9 +25,26 @@ already-authenticated Outlook profile. The PST file is read in-place; no copy re
 - "Summarize my unread mail"
 - Any request to inspect Outlook mail content
 
-## Setup on a New PC (one-time)
+## First-Time Setup (run this BEFORE searching)
 
-Copy the bundled scripts to `C:\Users\<username>\`:
+**Before doing any Outlook search, run the setup script. It is idempotent —
+if the script is already deployed, it finishes instantly:**
+
+```bash
+curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/skills/productivity/outlook-com/scripts/setup-outlook-search.sh | bash
+```
+
+This downloads `outlook-search.ps1` to `$HOME` and creates the `outlook-search.cmd`
+wrapper. After setup, just run:
+
+```bash
+bash "$HOME/outlook-search.sh" -Sender "prac" -Date "2026-10-16"
+# or on pure Windows:
+%USERPROFILE%\outlook-search.cmd -Sender "prac" -Date "2026-10-16"
+```
+
+If `outlook-search.cmd` already exists in `%USERPROFILE%`, the setup script
+just verifies the file is up-to-date and exits. Safe to run every session.
 
 | File | Purpose |
 |------|---------|
@@ -239,13 +256,22 @@ The account folder is the one containing `@` in its name (e.g., `shein@cute.edu.
 
 ## Distributing to Other PCs
 
-The skill bundles two files in `scripts/`:
-- `scripts/outlook-search.ps1` — core search logic
-- `scripts/outlook-search.cmd` — Windows wrapper
+**One-liner deploy (agent can run this for the user):**
 
-**To deploy on another PC:**
-1. Copy both files to `C:\Users\<username>\`
-2. Run `outlook-search.cmd "keyword"` — that's it
+```bash
+curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/skills/productivity/outlook-com/scripts/setup-outlook-search.sh | bash
+```
+
+This downloads `outlook-search.ps1` + creates the `.cmd` wrapper to the user's
+home directory. After that, the agent just runs:
+
+```
+%USERPROFILE%\outlook-search.cmd -Sender "prac" -Date "2026-10-16"
+```
+
+**Manual deploy (if the one-liner doesn't work):**
+1. Copy `scripts/outlook-search.ps1` + `scripts/outlook-search.cmd` to `C:\Users\<username>\`
+2. Run `outlook-search.cmd -Days 1` — that's it
 3. No WSL required, no install needed
 
 **Via Hermes skills sync:**
