@@ -1,7 +1,7 @@
 ---
 name: outlook-com
 description: "Read Outlook mail via PowerShell COM (MAPI). Use when the user asks to read, search, or summarize their Outlook inbox, or mentions reading Outlook emails. Works with WSL or pure Windows."
-version: 3.0.0
+version: 4.0.0
 author: shein
 platforms: [windows, wsl]
 metadata:
@@ -27,171 +27,82 @@ already-authenticated Outlook profile. The PST file is read in-place; no copy re
 
 ## Before You Do Anything (MANDATORY first step)
 
-**Every time the agent loads this skill, it MUST run the setup script first.**
-This is idempotent — if already deployed, it finishes in <1 second:
+Run the setup script once per session (idempotent, < 2 s). It deploys to the
+**current** Windows user's profile (detected via `%USERPROFILE%`):
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/outlook-com/scripts/setup-outlook-search.sh | bash
+curl -fsSL https://raw.githubusercontent.com/shein888/cute-hermes/main/outlook-com/scripts/setup-outlook-search.sh | bash
 ```
 
-This downloads `outlook-search.ps1` + `outlook-search.cmd` to the user's home
-directory and (on WSL) to `C:\Users\<username>\`. **Do not skip this step.**
-Do not search Outlook before confirming the script is deployed.
+| File | Where | Purpose |
+|------|-------|---------|
+| `outlook-search.ps1` | `%USERPROFILE%` | Core search logic (Windows PowerShell 5.1, UTF-8 BOM) |
+| `outlook-search.cmd` | `%USERPROFILE%` | Wrapper for cmd / pure Windows |
+| `outlook-search.sh`  | WSL `~`        | Wrapper for WSL — finds the Windows profile itself |
+
+**NEVER hard-code a Windows username or path** (e.g. `C:\Users\shein`).
+From WSL always call `bash ~/outlook-search.sh ...`; on pure Windows call
+`%USERPROFILE%\outlook-search.cmd ...`.
+
+**Do NOT kill Outlook.** v4 attaches to the running Outlook (or starts it
+in the background). Killing Outlook can corrupt the OST/PST and is not needed.
+
+## If it fails on a PC: run the diagnose first
 
 ```bash
-bash "$HOME/outlook-search.sh" -Sender "prac" -Date "2026-10-16"
-# or on pure Windows:
-%USERPROFILE%\outlook-search.cmd -Sender "prac" -Date "2026-10-16"
+bash ~/outlook-search.sh -Diagnose
 ```
 
-If `outlook-search.cmd` already exists in `%USERPROFILE%`, the setup script
-just verifies the file is up-to-date and exits. Safe to run every session.
+Read the output and tell the user the cause in plain words:
 
-| File | Purpose |
-|------|---------|
-| `outlook-search.ps1` | Core search logic (PowerShell) |
-| `outlook-search.cmd` | Windows command-line wrapper |
+| Diagnose shows | Meaning / fix |
+|----------------|---------------|
+| `ComRegistered: False` + `NewOutlookInstalled: True` | PC uses **New Outlook** (olk.exe) — it has no COM. Switch back to classic Outlook (toggle "New Outlook" off) or install Microsoft 365 desktop Outlook. |
+| `ComRegistered: False` | Classic Outlook not installed. |
+| `COM test: FAILED ... 80080005` | Outlook and PowerShell run with different privileges (one is "Run as administrator"). Run both normally. |
+| `AntivirusRegistered: NONE` or `ObjectModelGuardPolicy` set | Outlook shows a hidden "A program is trying to access e-mail address information" prompt → script hangs. Fix antivirus status (Trust Center > Programmatic Access) or ask IT to allow programmatic access via GPO. |
+| `ExecutionPolicy: MachinePolicy=AllSigned/Restricted` | Group Policy blocks scripts; `-ExecutionPolicy Bypass` cannot override it. Ask IT. |
+| `powershell.exe not reachable from WSL` | WSL interop disabled (`/etc/wsl.conf` `[interop] enabled=false` or `appendWindowsPath=false`). |
+| Profile chooser dialog | Control Panel > Mail > Show Profiles > "Always use this profile". |
 
-**v3.0.0 changes:**
-- **FIX: Inbox root items are now searched** — v2.0 only scanned subfolders, missing mails sitting directly in the inbox
-- **NEW: `-Sender` parameter** — search by sender email/name (partial match)
-- **NEW: `-Date` parameter** — exact date filter (yyyy-MM-dd)
-- **NEW: `-Recursive` switch** — search ALL folders recursively (account-wide)
-- **FIX: Encoding** — uses `[string]` cast on COM properties to avoid `System.__ComObject` display issues
-- **NEW: Scanned item count** — result file now shows how many items were actually scanned
-
-**No WSL needed.** The `.cmd` works in any Windows `cmd.exe` or PowerShell.
-Use `%USERPROFILE%` instead of hardcoding the username path:
-
-```
-cmd /c "%USERPROFILE%\outlook-search.cmd 114-2"
-```
-
-The `.sh` wrapper (`outlook-search.sh`) is optional — only for WSL users.
-
-**IMPORTANT: Replace `<username>` with the actual Windows username on the target PC.**
-Use `%USERPROFILE%` (Windows) or `$env:USERNAME` (PowerShell) — never hardcode a username.
-
-## Step 1: Kill Outlook
-
-```bash
-# WSL
-/mnt/c/Windows/System32/taskkill.exe /F /IM OUTLOOK.EXE 2>&1
-sleep 2
-
-# Pure Windows
-taskkill /F /IM OUTLOOK.EXE 2>nul
-```
-
-## Step 2: Run the search script
-
-The script supports six parameters:
+## Search
 
 | Parameter | Description |
 |-----------|-------------|
-| `-Keyword` | Search by subject substring |
-| `-Sender` | Search by sender email/name (partial match) |
-| `-Date` | Exact date filter (yyyy-MM-dd) |
-| `-Days` | Only show mail from last N days (1=24h, 3=3days) |
-| `-Folder` | Limit to specific inbox subfolder |
-| `-Recursive` | Search ALL folders recursively (slower) |
+| `-Keyword` | Subject contains (case-insensitive) |
+| `-Sender` | Sender email or name contains (case-insensitive) |
+| `-Date` | Exact day (yyyy-MM-dd) |
+| `-Days` | Last N days |
+| `-Folder` | One subfolder of the Inbox |
+| `-Recursive` | All folders of the default mailbox (slower) |
+| `-Max` | Stop after N matches (default 100) |
+| `-Diagnose` | Environment check, no search |
 
 ```bash
 # WSL
-powershell.exe -ExecutionPolicy Bypass -File "C:\Users\<username>\outlook-search.ps1" -Keyword "KEYWORD" -Days 1
-
-# Pure Windows (via .cmd)
-cmd /c "%USERPROFILE%\outlook-search.cmd -Keyword KEYWORD -Days 1"
-```
-
-**Common patterns:**
-
-```bash
-# Search by keyword (all time)
-"C:\Users\shein\outlook-search.cmd" -Keyword "114-2"
-
-# Search by sender (partial match works)
-"C:\Users\shein\outlook-search.cmd" -Sender "prac@cute.edu.tw"
-"C:\Users\shein\outlook-search.cmd" -Sender "prac"
-
-# Search by sender + specific date
-"C:\Users\shein\outlook-search.cmd" -Sender "prac" -Date "2026-10-16"
-
-# Last 24 hours, all mail
-"C:\Users\shein\outlook-search.cmd" -Days 1
-
-# Last 3 days, keyword search
-"C:\Users\shein\outlook-search.cmd" -Keyword "法規" -Days 3
-
-# Specific folder, last 24h
-"C:\Users\shein\outlook-search.cmd" -Folder "02-圖資中心" -Days 1
-
-# Search ALL folders recursively (use when you don't know which folder)
-"C:\Users\shein\outlook-search.cmd" -Keyword "test" -Recursive
-"C:\Users\shein\outlook-search.cmd" -Sender "prac" -Date "2026-10-16" -Recursive
-```
-
-**CRITICAL: Search the inbox root items, not just subfolders.**
-The default mode now scans both the inbox root AND its subfolders. Previously
-it only scanned subfolders, which meant mails sitting directly in the inbox
-were missed. Use `-Recursive` to expand to ALL folders (account-wide).
-
-**IMPORTANT: Use the user's exact original string as the search keyword.** Do NOT
-split it into smaller keywords or guess. If the user says "檢核114-2、115-1全校
-法規彙編作業", search for a distinctive substring like `"114-2"` — the user's
-string will still match via `.Contains()`. Subjects often have prefixes ("FW:",
-"RE:", "【重要】") that break exact `-eq` matching but NOT `.Contains()`.
-
-### Read today's inbox
-
-```powershell
-# inline (write to .ps1 file if it contains Chinese)
-$outlook = New-Object -ComObject Outlook.Application
-$ns = $outlook.GetNamespace('MAPI')
-$account = $ns.Folders | Where-Object { $_.Name -like "*@*" } | Select-Object -First 1
-$inbox = $account.Folders | Where-Object { $_.Name -eq "收件匣" -or $_.Name -eq "Inbox" } | Select-Object -First 1
-if ($inbox -eq $null) { $inbox = $account.Folders | Select-Object -First 1 }
-
-$startOfDay = (Get-Date).Date.ToString('yyyy-MM-dd')
-$items = $inbox.Items.Restrict("[ReceivedTime] > '$startOfDay'")
-
-$lines = @()
-$lines += "Inbox: $($inbox.Name) | Count: $($items.Count)"
-foreach ($item in $items) {
-    $lines += "---"
-    $lines += "From: $($item.SenderName)"
-    $lines += "Date: $($item.ReceivedTime.ToString('yyyy-MM-dd HH:mm:ss'))"
-    $lines += "Subject: $($item.Subject)"
-    if ($item.Body) {
-        $b = $item.Body.Substring(0, [Math]::Min(500, $item.Body.Length))
-        $lines += "Body: $($b -replace \"`r`n\", ' | ')"
-    }
-    $lines += ""
-}
-[System.IO.File]::WriteAllLines("C:\Users\<username>\mail-result.txt", $lines, [System.Text.Encoding]::UTF8)
-```
-
-## Step 3: Read results
-
-The script writes results to `C:\Users\<username>\search-result.txt` (UTF-8):
-
-```bash
-# WSL
-cat /mnt/c/Users/<username>/search-result.txt
+bash ~/outlook-search.sh -Keyword "114-2"
+bash ~/outlook-search.sh -Sender "prac" -Date "2026-10-16"
+bash ~/outlook-search.sh -Keyword "法規" -Days 3
+bash ~/outlook-search.sh -Folder "02-圖資中心" -Days 1
+bash ~/outlook-search.sh -Keyword "test" -Recursive
 
 # Pure Windows
-type C:\Users\shein\search-result.txt
+%USERPROFILE%\outlook-search.cmd -Sender "prac" -Date "2026-10-16"
 ```
 
-## Step 4: Cleanup
+The wrapper prints the result file. It is also saved to
+`%USERPROFILE%\search-result.txt` (UTF-8). Exit code 0 = OK, 2 = bad
+arguments, 3 = Outlook/COM/environment problem (message in the result file).
 
-```bash
-# WSL
-/mnt/c/Windows/System32/taskkill.exe /F /IM OUTLOOK.EXE 2>&1
+The Inbox is found with `GetDefaultFolder(olFolderInbox)`, so it works with
+any Outlook language (收件匣 / 收件箱 / Inbox) and any account name.
+Date filters stop scanning early (items are sorted newest first), so
+`-Days` / `-Date` are fast even on large mailboxes — prefer them.
 
-# Pure Windows
-taskkill /F /IM OUTLOOK.EXE 2>nul
-```
+**Use the user's exact original string as the search keyword.** Do NOT split
+it into smaller keywords. Pick a distinctive substring such as `"114-2"`;
+prefixes like "FW:", "RE:", "【重要】" do not matter because matching uses
+"contains".
 
 ## MailItem Class IDs
 
@@ -220,30 +131,16 @@ $items = $inbox.Items.Restrict("[SenderEmailAddress] = 'someone@example.com'")
 
 ## Pitfalls
 
-1. **Outlook locks MAPI** — if Outlook is open, COM hangs or profile conflicts. Always `taskkill /F /IM OUTLOOK.EXE` first, `sleep 2`.
-
-2. **Encoding** — inline PowerShell `-Command` with Chinese text breaks. Always write to `.ps1` file and use `-File`.
-
-3. **Folder names vary by locale** — 收件匣 (tw), 收件箱 (zh-cn), Inbox (en). Try multiple names or just take the first folder.
-
-4. **Large inboxes** — use `-Date` or `-Days` filter to narrow the search. Iterating 3k+ items in a single folder takes 30+ seconds; `-Recursive` on all folders takes 60-120 seconds.
-
-5. **Timeout** — first COM call takes 10-30s (Outlook loads MAPI profile). Set `timeout=120`.
-
-6. **Body truncation** — truncate to ~500 chars for summaries. `$item.BodyPreview` gives ~100 chars.
-
-7. **WSL path for -File** — use `C:\Users\shein\script.ps1`, NOT `/mnt/c/Users/shein/script.ps1`. PowerShell can't resolve `/mnt/` paths.
-
-8. **Result file** — write to a file (UTF-8) then read it. Console output from WSL calling Windows PowerShell often garbles Chinese characters.
-
-9. **Use the user's exact original string for search** — use `.Contains()` with the user's verbatim text. Do NOT split into sub-keywords or guess.
-
-10. **Writing .ps1 from WSL with Chinese text** — use Python with `utf-8-sig` encoding. `cat > file.ps1 << 'EOF'` heredoc will corrupt Chinese characters.
-
-```python
-with open('/mnt/c/Users/shein/search.ps1', 'w', encoding='utf-8-sig') as f:
-    f.write(ps1_content)
-```
+1. **Timeout** — the first COM call can take 10-30 s while Outlook loads the
+   profile. Use a tool timeout of 120 s or more; `-Recursive` can take 60-120 s.
+2. **Hidden security prompt** — if a search hangs, run `-Diagnose`
+   (see the table above). It is a PC setting, not a script bug.
+3. **Encoding** — never pass Chinese via `powershell.exe -Command`. Use the
+   `.ps1` file (saved as UTF-8 with BOM) and read the UTF-8 result file.
+   When writing a new .ps1 from WSL, use Python `encoding='utf-8-sig'`.
+4. **WSL paths** — PowerShell cannot open `/mnt/c/...` paths; the wrapper
+   converts them with `wslpath`.
+5. **Body truncation** — results include the first 500 chars of the body.
 
 ## Finding the Account Name
 
@@ -260,19 +157,19 @@ The account folder is the one containing `@` in its name (e.g., `shein@cute.edu.
 **One-liner deploy (agent can run this for the user):**
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/outlook-com/scripts/setup-outlook-search.sh | bash
+curl -fsSL https://raw.githubusercontent.com/shein888/cute-hermes/main/outlook-com/scripts/setup-outlook-search.sh | bash
 ```
 
-This downloads `outlook-search.ps1` + creates the `.cmd` wrapper to the user's
-home directory. After that, the agent just runs:
+This deploys `outlook-search.ps1` + `.cmd` to the current Windows user's
+profile and `outlook-search.sh` to the WSL home directory. After that, the agent just runs:
 
 ```
-%USERPROFILE%\outlook-search.cmd -Sender "prac" -Date "2026-10-16"
+bash ~/outlook-search.sh -Sender "prac" -Date "2026-10-16"
 ```
 
 **Manual deploy (if the one-liner doesn't work):**
-1. Copy `scripts/outlook-search.ps1` + `scripts/outlook-search.cmd` to `C:\Users\<username>\`
-2. Run `outlook-search.cmd -Days 1` — that's it
+1. Copy `scripts/outlook-search.ps1` + `scripts/outlook-search.cmd` to `%USERPROFILE%\`
+2. Run `outlook-search.cmd -Diagnose`, then `outlook-search.cmd -Days 1`
 3. No WSL required, no install needed
 
 **Via Hermes skills sync:**

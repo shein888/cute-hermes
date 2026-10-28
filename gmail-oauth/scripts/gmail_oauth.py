@@ -2,331 +2,501 @@
 """
 gmail_oauth.py — Gmail API OAuth2 helper for Hermes agents.
 
-Uses loopback redirect (http://localhost:8080) — compatible with
-Google's Desktop app OAuth client. No OOB flow.
+Loopback redirect (http://127.0.0.1:<port>) + PKCE, compatible with
+Google's "Desktop app" OAuth client. No OOB flow.
 
 Usage:
-  python3 gmail_oauth.py list              # List inbox (last 10)
-  python3 gmail_oauth.py read MESSAGE_ID   # Read a message
-  python3 gmail_oauth.py send TO SUBJECT BODY  # Send email
-  python3 gmail_oauth.py search QUERY     # Search (Gmail search syntax)
-  python3 gmail_oauth.py setup            # Run OAuth flow (first time)
-  python3 gmail_oauth.py status           # Check token status
-  python3 gmail_oauth.py import-code URL  # Exchange a pasted callback URL
+  python3 gmail_oauth.py setup [--timeout SEC] [--no-browser]
+                                         # Open consent page and wait for callback
+  python3 gmail_oauth.py auth-url        # Print consent URL only (no waiting)
+  python3 gmail_oauth.py import-code URL # Exchange a pasted callback URL
+  python3 gmail_oauth.py status          # Check token status
+  python3 gmail_oauth.py list [N]        # List inbox (default 10)
+  python3 gmail_oauth.py search QUERY [N]
+  python3 gmail_oauth.py read MESSAGE_ID
+  python3 gmail_oauth.py send TO SUBJECT BODY
+  python3 gmail_oauth.py reply TO THREAD_ID BODY
+
+Environment:
+  GMAIL_OAUTH_CLIENT_ID / GMAIL_OAUTH_CLIENT_SECRET (or ~/.config/gmail-oauth/env)
+  GMAIL_OAUTH_PORT   fixed callback port (default: 8765)
 """
 
+import base64
+import hashlib
+import html
+import http.server
 import json
 import os
+import re
+import secrets
+import shutil
+import subprocess
 import sys
-import base64
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
-import http.server
-from pathlib import Path
 from datetime import datetime
+from email import message_from_bytes, policy
+from email.message import EmailMessage
+from email.utils import parsedate_to_datetime
+from pathlib import Path
 
 # ─── Config ───────────────────────────────────────────────────────────────
+CONF_DIR = Path.home() / ".config" / "gmail-oauth"
+TOKEN_FILE = CONF_DIR / "token.json"
+PENDING_FILE = CONF_DIR / "pending.json"
+ENV_FILE = CONF_DIR / "env"
+
+SCOPES = "https://www.googleapis.com/auth/gmail.modify"
+AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
+TOKEN_ENDPOINT = os.environ.get("GMAIL_OAUTH_TOKEN_ENDPOINT", "https://oauth2.googleapis.com/token")
+API_BASE = os.environ.get("GMAIL_OAUTH_API_BASE", "https://gmail.googleapis.com/gmail/v1/users/me")
+DEFAULT_PORT = int(os.environ.get("GMAIL_OAUTH_PORT", "8765"))
+HOSTED_DOMAIN = "gm.cute.edu.tw"  # hint only; Internal app already restricts to the org
+
+
 def _get_client_credentials():
     """Read credentials from env vars or ~/.config/gmail-oauth/env."""
     client_id = os.environ.get("GMAIL_OAUTH_CLIENT_ID", "")
     client_secret = os.environ.get("GMAIL_OAUTH_CLIENT_SECRET", "")
-    env_file = Path.home() / ".config" / "gmail-oauth" / "env"
-    if (not client_id or not client_secret) and env_file.exists():
-        for line in env_file.read_text().splitlines():
+    if (not client_id or not client_secret) and ENV_FILE.exists():
+        for line in ENV_FILE.read_text().splitlines():
             line = line.strip()
-            if line.startswith("export GMAIL_OAUTH_CLIENT_ID="):
-                client_id = line.split("=", 1)[1].strip('"')
-            elif line.startswith("export GMAIL_OAUTH_CLIENT_SECRET="):
-                client_secret = line.split("=", 1)[1].strip('"')
+            if line.startswith("export "):
+                line = line[len("export "):]
+            if "=" not in line:
+                continue
+            key, val = line.split("=", 1)
+            val = val.strip().strip('"').strip("'")
+            if key == "GMAIL_OAUTH_CLIENT_ID" and not client_id:
+                client_id = val
+            elif key == "GMAIL_OAUTH_CLIENT_SECRET" and not client_secret:
+                client_secret = val
     return client_id, client_secret
 
 
 CLIENT_ID, CLIENT_SECRET = _get_client_credentials()
-SCOPES = "https://www.googleapis.com/auth/gmail.modify"
-REDIRECT_PORT = 8080
-REDIRECT_URI = f"http://localhost:{REDIRECT_PORT}"
-TOKEN_FILE = Path.home() / ".config" / "gmail-oauth" / "token.json"
-API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
+
+
+def _die(msg, code=1):
+    print(msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def _require_client():
+    if not CLIENT_ID or not CLIENT_SECRET:
+        _die("ERROR: GMAIL_OAUTH_CLIENT_ID / GMAIL_OAUTH_CLIENT_SECRET not set.\n"
+             f"Write them to {ENV_FILE} first.")
+
+
+def _write_private(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2))
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+# ─── HTTP helpers ─────────────────────────────────────────────────────────
+def _post_form(url, fields):
+    data = urllib.parse.urlencode(fields).encode()
+    req = urllib.request.Request(url, data=data,
+                                 headers={"Content-Type": "application/x-www-form-urlencoded"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="replace")
+        try:
+            err = json.loads(body)
+            detail = f"{err.get('error')}: {err.get('error_description', '')}"
+        except ValueError:
+            detail = body[:300]
+        raise RuntimeError(f"HTTP {e.code} from {url} — {detail}") from None
 
 
 # ─── Token helpers ────────────────────────────────────────────────────────
 def load_token():
     if TOKEN_FILE.exists():
-        with open(TOKEN_FILE) as f:
-            return json.load(f)
+        try:
+            return json.loads(TOKEN_FILE.read_text())
+        except ValueError:
+            return None
     return None
 
 
-def save_token(token_data):
-    TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(TOKEN_FILE, "w") as f:
-        json.dump(token_data, f, indent=2)
+def save_token(token):
+    _write_private(TOKEN_FILE, token)
+
+
+def refresh_token(token):
+    _require_client()
+    try:
+        result = _post_form(TOKEN_ENDPOINT, {
+            "client_id": CLIENT_ID,
+            "client_secret": CLIENT_SECRET,
+            "refresh_token": token["refresh_token"],
+            "grant_type": "refresh_token",
+        })
+    except RuntimeError as e:
+        if "invalid_grant" in str(e):
+            _die("Refresh token was revoked or expired (invalid_grant).\n"
+                 "Re-authorize: python3 gmail_oauth.py setup")
+        raise
+    token.update(result)  # keeps refresh_token if Google does not send a new one
+    token["expires_at"] = time.time() + result.get("expires_in", 3600)
+    save_token(token)
+    return token
 
 
 def get_access_token():
-    """Get a valid access token, refreshing if needed."""
     token = load_token()
-    if not token:
-        print("No token found. Run: python3 gmail_oauth.py setup", file=sys.stderr)
-        sys.exit(1)
-    now = datetime.now().timestamp()
-    if token.get("expires_at") and now > token["expires_at"] - 60:
-        if "refresh_token" not in token:
-            print("Token expired and no refresh token. Re-run setup.", file=sys.stderr)
-            sys.exit(1)
-        token = refresh_token(token["refresh_token"])
+    if not token or "access_token" not in token:
+        _die("NO_TOKEN: Gmail is not authorized yet. Run: python3 gmail_oauth.py setup")
+    if time.time() > token.get("expires_at", 0) - 60:
+        if not token.get("refresh_token"):
+            _die("Token expired and no refresh token. Re-run: python3 gmail_oauth.py setup")
+        token = refresh_token(token)
     return token["access_token"]
 
 
-def refresh_token(refresh_tok):
-    data = urllib.parse.urlencode({
+# ─── Browser opening (WSL aware) ──────────────────────────────────────────
+def _is_wsl():
+    if os.environ.get("WSL_DISTRO_NAME"):
+        return True
+    try:
+        return "microsoft" in Path("/proc/version").read_text().lower()
+    except OSError:
+        return False
+
+
+def open_browser(url):
+    """Try hard to open the URL in a real browser. Returns True on success."""
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(url)  # type: ignore[attr-defined]
+            return True
+        if _is_wsl():
+            # Open in the Windows default browser.
+            if shutil.which("wslview"):
+                return subprocess.run(["wslview", url]).returncode == 0
+            rundll = shutil.which("rundll32.exe") or "/mnt/c/Windows/System32/rundll32.exe"
+            if os.path.exists(rundll) or shutil.which("rundll32.exe"):
+                subprocess.Popen([rundll, "url.dll,FileProtocolHandler", url],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return True
+            ps = shutil.which("powershell.exe") or "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+            if os.path.exists(ps):
+                subprocess.Popen([ps, "-NoProfile", "-Command", "Start-Process", f"'{url}'"],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return True
+            return False
+        if sys.platform == "darwin":
+            return subprocess.run(["open", url]).returncode == 0
+        if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+            return False  # headless Linux: webbrowser would fall back to a text browser
+        import webbrowser
+        return bool(webbrowser.open(url))
+    except Exception:
+        return False
+
+
+# ─── OAuth flow ───────────────────────────────────────────────────────────
+def _b64url(raw):
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def _new_pending(port):
+    verifier = _b64url(secrets.token_bytes(48))
+    pending = {
+        "state": _b64url(secrets.token_bytes(16)),
+        "code_verifier": verifier,
+        "redirect_uri": f"http://127.0.0.1:{port}",
+        "created_at": time.time(),
+    }
+    _write_private(PENDING_FILE, pending)
+    return pending
+
+
+def _auth_url(pending):
+    challenge = _b64url(hashlib.sha256(pending["code_verifier"].encode()).digest())
+    return AUTH_ENDPOINT + "?" + urllib.parse.urlencode({
         "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "refresh_token": refresh_tok,
-        "grant_type": "refresh_token",
-    }).encode()
-    req = urllib.request.Request(
-        "https://oauth2.googleapis.com/token",
-        data=data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-    )
-    with urllib.request.urlopen(req) as resp:
-        result = json.loads(resp.read())
-    result["expires_at"] = datetime.now().timestamp() + result.get("expires_in", 3600)
-    result["refresh_token"] = refresh_tok
-    save_token(result)
-    return result
-
-
-# ─── Code exchange ────────────────────────────────────────────────────────
-def _exchange_code(code):
-    """Exchange an authorization code for a token and save it."""
-    data = urllib.parse.urlencode({
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "code": code,
-        "grant_type": "authorization_code",
-        "redirect_uri": REDIRECT_URI,
-    }).encode()
-    req = urllib.request.Request(
-        "https://oauth2.googleapis.com/token",
-        data=data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-    )
-    with urllib.request.urlopen(req) as resp:
-        token = json.loads(resp.read())
-    token["expires_at"] = datetime.now().timestamp() + token.get("expires_in", 3600)
-    save_token(token)
-    print(f"\n[OK] Token saved to {TOKEN_FILE}")
-    print(f"   Expires in {token.get('expires_in', 'unknown')}s")
-    if token.get("refresh_token"):
-        print("   Refresh token saved (auto-refreshes forever)")
-    else:
-        print("   WARNING: No refresh token received. Token will expire.")
-
-
-# ─── OAuth flow ──────────────────────────────────────────────────────────
-def oauth_setup():
-    """Run the full OAuth2 loopback flow."""
-    if not CLIENT_ID or not CLIENT_SECRET:
-        print("ERROR: GMAIL_OAUTH_CLIENT_ID / GMAIL_OAUTH_CLIENT_SECRET not set.", file=sys.stderr)
-        print("Set them in ~/.config/gmail-oauth/env first.", file=sys.stderr)
-        sys.exit(1)
-
-    params = urllib.parse.urlencode({
-        "client_id": CLIENT_ID,
-        "redirect_uri": REDIRECT_URI,
+        "redirect_uri": pending["redirect_uri"],
         "response_type": "code",
         "scope": SCOPES,
         "access_type": "offline",
+        "prompt": "consent",          # always return a refresh_token
+        "include_granted_scopes": "true",
+        "state": pending["state"],
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "hd": HOSTED_DOMAIN,
     })
-    auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{params}"
 
-    # Try to open browser automatically
+
+def _exchange_code(code, pending):
+    token = _post_form(TOKEN_ENDPOINT, {
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+        "code": code,
+        "code_verifier": pending["code_verifier"],
+        "grant_type": "authorization_code",
+        "redirect_uri": pending["redirect_uri"],
+    })
+    token["expires_at"] = time.time() + token.get("expires_in", 3600)
+    old = load_token() or {}
+    if not token.get("refresh_token") and old.get("refresh_token"):
+        token["refresh_token"] = old["refresh_token"]
+    save_token(token)
     try:
-        import webbrowser
-        webbrowser.open(auth_url)
-        browser_opened = True
-    except Exception:
-        browser_opened = False
+        PENDING_FILE.unlink()
+    except OSError:
+        pass
+    print(f"[OK] Authorized. Token saved to {TOKEN_FILE}")
+    print("     Refresh token: " + ("present (auto-refresh works)" if token.get("refresh_token")
+                                    else "MISSING — revoke app access and run setup again"))
 
-    if browser_opened:
-        print("Opening browser for Google sign-in...")
-    else:
-        print(f"\nOpen this URL in your browser:\n\n{auth_url}\n")
 
-    # Listen for callback on localhost:8080
+def _bind_server(preferred_port, handler):
+    for port in (preferred_port, 0):
+        try:
+            return http.server.HTTPServer(("127.0.0.1", port), handler)
+        except OSError:
+            continue
+    _die("Could not open a local port for the OAuth callback.")
+
+
+def oauth_setup(timeout=300, no_browser=False):
+    _require_client()
     captured = {}
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
-            if self.path.startswith("/?"):
-                query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-                if "code" in query:
-                    captured["code"] = query["code"][0]
-                    self.send_response(200)
-                    self.send_header("Content-Type", "text/html")
-                    self.end_headers()
-                    self.wfile.write(b"<html><body><h2>Gmail OAuth complete!</h2><p>You can close this tab.</p></body></html>")
-                elif "error" in query:
-                    captured["error"] = query["error"][0]
-                    self.send_response(400)
-                    self.send_header("Content-Type", "text/html")
-                    self.end_headers()
-                    self.wfile.write(f"<h2>Error: {query['error'][0]}</h2>".encode())
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            if "code" in q or "error" in q:
+                if q.get("state", [""])[0] != pending["state"]:
+                    self._reply(400, "State mismatch — please run setup again.")
+                    return
+                if "code" in q:
+                    captured["code"] = q["code"][0]
+                    self._reply(200, "Gmail 授權完成，可以關閉這個分頁。<br>Gmail OAuth complete — you can close this tab.")
                 else:
-                    self.send_response(400)
-                    self.end_headers()
+                    captured["error"] = q["error"][0]
+                    self._reply(400, f"授權失敗 / Error: {html.escape(q['error'][0])}")
             else:
-                self.send_response(404)
-                self.end_headers()
+                self._reply(404, "Not found")  # favicon etc. — keep waiting
 
-        def log_message(self, format, *args):
+        def _reply(self, status, text):
+            body = f"<html><meta charset='utf-8'><body><h2>{text}</h2></body></html>".encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
             pass
 
-    server = http.server.HTTPServer(("127.0.0.1", REDIRECT_PORT), Handler)
-    server.timeout = 300  # 5 min timeout
-    print(f"Waiting for browser callback on http://localhost:{REDIRECT_PORT} (5 min timeout)...")
-    server.handle_request()
+    server = _bind_server(DEFAULT_PORT, Handler)
+    port = server.server_address[1]
+    pending = _new_pending(port)
+    url = _auth_url(pending)
+
+    # Always print the URL so the agent can relay it to the user.
+    print("AUTH_URL: " + url, flush=True)
+    opened = False if no_browser else open_browser(url)
+    print(("[..] Browser opened. " if opened else "[!!] Could not open a browser automatically. ")
+          + "Sign in with your gm account and click Allow.", flush=True)
+    print(f"[..] Waiting for callback on {pending['redirect_uri']} (timeout {timeout}s)...", flush=True)
+
+    deadline = time.time() + timeout
+    server.timeout = 1
+    while not captured and time.time() < deadline:
+        server.handle_request()
     server.server_close()
 
+    if "code" in captured:
+        _exchange_code(captured["code"], pending)
+        return
     if "error" in captured:
-        print(f"OAuth error: {captured['error']}", file=sys.stderr)
-        print("\nFalling back to manual code entry.")
-        print("Open the URL above, authorize, then copy the callback URL from the browser bar.")
-        code = input("Paste the full callback URL (http://localhost:8080/?code=...): ").strip()
-        if code:
-            _exchange_url(code)
+        _die(f"OAuth error: {captured['error']}")
+
+    print("\n[!!] No callback received.", file=sys.stderr)
+    print("If the browser ended on a page that could not load (http://127.0.0.1:...?code=...),\n"
+          "copy that full address and run:\n"
+          "  python3 gmail_oauth.py import-code '<pasted URL>'\n"
+          "The pending login stays valid for about 10 minutes.", file=sys.stderr)
+    if sys.stdin.isatty():
+        try:
+            pasted = input("Or paste the callback URL here (Enter to skip): ").strip()
+        except EOFError:
+            pasted = ""
+        if pasted:
+            import_code(pasted)
             return
-        sys.exit(1)
-
-    if "code" not in captured:
-        print("No code received. Timed out.")
-        print("If the browser opened but the page couldn't load, paste the URL:")
-        code = input("Paste the full callback URL (http://localhost:8080/?code=...): ").strip()
-        if code:
-            _exchange_url(code)
-            return
-        sys.exit(1)
-
-    _exchange_code(captured["code"])
+    sys.exit(2)
 
 
-def _exchange_url(url):
-    """Extract code from a pasted callback URL and exchange it."""
-    query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
-    if "code" not in query:
-        print(f"No code found in: {url}", file=sys.stderr)
-        sys.exit(1)
-    _exchange_code(query["code"][0])
+def print_auth_url():
+    """Create a pending login and print the consent URL without waiting."""
+    _require_client()
+    pending = _new_pending(DEFAULT_PORT)
+    url = _auth_url(pending)
+    print("AUTH_URL: " + url)
+    print("After clicking Allow the browser will show a page that cannot load.\n"
+          "Copy its full address and run: python3 gmail_oauth.py import-code '<URL>'")
 
 
 def import_code(callback_url):
-    """Exchange a pasted callback URL for a token."""
-    _exchange_url(callback_url)
+    _require_client()
+    if not PENDING_FILE.exists():
+        _die("No pending login. Run `setup` or `auth-url` first, then authorize again.")
+    pending = json.loads(PENDING_FILE.read_text())
+    q = urllib.parse.parse_qs(urllib.parse.urlparse(callback_url.strip()).query)
+    if "error" in q:
+        _die(f"OAuth error in URL: {q['error'][0]}")
+    if "code" not in q:
+        _die(f"No code found in: {callback_url}")
+    if q.get("state", [""])[0] != pending["state"]:
+        _die("State mismatch — this URL belongs to a different login attempt. Run setup again.")
+    _exchange_code(q["code"][0], pending)
 
 
-# ─── API calls ───────────────────────────────────────────────────────────
+# ─── Gmail API ────────────────────────────────────────────────────────────
+def _api(method, path, payload=None):
+    req = urllib.request.Request(
+        f"{API_BASE}/{path}",
+        data=json.dumps(payload).encode() if payload is not None else None,
+        method=method,
+        headers={"Authorization": f"Bearer {get_access_token()}",
+                 "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        _die(f"Gmail API error {e.code}: {e.read().decode(errors='replace')[:500]}")
+
+
 def api_get(path):
-    token = get_access_token()
-    url = f"{API_BASE}/{path}"
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
-    with urllib.request.urlopen(req) as resp:
-        return json.loads(resp.read())
+    return _api("GET", path)
 
 
 def api_post(path, data):
-    token = get_access_token()
-    url = f"{API_BASE}/{path}"
-    body = json.dumps(data).encode()
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        },
-    )
-    with urllib.request.urlopen(req) as resp:
-        return json.loads(resp.read())
+    return _api("POST", path, data)
 
 
-def decode_mime(raw_b64):
-    """Decode a Gmail raw message (MIME base64url)."""
-    raw = base64.urlsafe_b64decode(raw_b64 + "==")
+def _headers(msg):
+    return {h["name"].lower(): h["value"] for h in msg.get("payload", {}).get("headers", [])}
+
+
+def _fmt_date(internal_ms):
     try:
-        return raw.decode("utf-8")
-    except UnicodeDecodeError:
-        return raw.decode("latin-1")
+        return datetime.fromtimestamp(int(internal_ms) / 1000).strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError):
+        return "unknown"
 
 
-def extract_subject(raw_mime):
-    for line in raw_mime.split("\n"):
-        if line.lower().startswith("subject:"):
-            return line[8:].strip()
-    return "(no subject)"
+def _list_messages(query, limit):
+    q = urllib.parse.urlencode({"maxResults": limit, "q": query})
+    result = api_get(f"messages?{q}")
+    rows = []
+    for m in result.get("messages", []):
+        d = api_get(f"messages/{m['id']}?format=metadata"
+                    "&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date")
+        h = _headers(d)  # Gmail returns these headers already decoded (UTF-8)
+        rows.append((m["id"], m.get("threadId", ""), _fmt_date(d.get("internalDate")),
+                     h.get("from", "(unknown)"), h.get("subject", "(no subject)"),
+                     "UNREAD" in d.get("labelIds", [])))
+    return rows
 
 
-def extract_from(raw_mime):
-    for line in raw_mime.split("\n"):
-        if line.lower().startswith("from:"):
-            return line[5:].strip()
-    return "(unknown)"
+def _print_rows(rows):
+    if not rows:
+        print("No messages.")
+        return
+    print(f"{'ID':<18}  {'THREAD':<18}  {'DATE':<16}  {'FROM':<35}  SUBJECT")
+    print("─" * 120)
+    for mid, tid, date, frm, subj, unread in rows:
+        mark = "*" if unread else " "
+        print(f"{mid:<18}  {tid:<18}  {date:<16}  {frm[:35]:<35} {mark}{subj[:60]}")
 
 
 def cmd_list(limit=10):
-    result = api_get(f"messages?maxResults={limit}&q=is:inbox")
-    messages = result.get("messages", [])
-    if not messages:
-        print("Inbox is empty.")
-        return
-    print(f"{'ID':<30}  {'DATE':<22}  {'FROM':<35}  SUBJECT")
-    print("─" * 120)
-    for msg in messages:
-        detail = api_get(f"messages/{msg['id']}?format=raw")
-        subj = extract_subject(decode_mime(detail["raw"]))
-        frm = extract_from(decode_mime(detail["raw"]))
-        date = detail.get("internalDate", "")
-        date_str = datetime.fromtimestamp(int(date) / 1000).strftime("%Y-%m-%d %H:%M") if date else "unknown"
-        print(f"{msg['id']:<30}  {date_str:<22}  {frm[:35]:<35}  {subj[:50]}")
-
-
-def cmd_read(message_id):
-    detail = api_get(f"messages/{message_id}?format=raw")
-    raw = decode_mime(detail["raw"])
-    print(raw[:5000])
-    if len(raw) > 5000:
-        print(f"\n... ({len(raw) - 5000} more chars)")
-
-
-def cmd_send(to, subject, body):
-    mime = (
-        f"To: {to}\r\n"
-        f"Subject: {subject}\r\n"
-        f"Content-Type: text/plain; charset=utf-8\r\n"
-        f"\r\n"
-        f"{body}\r\n"
-    )
-    raw_b64 = base64.urlsafe_b64encode(mime.encode("utf-8")).decode("ascii")
-    result = api_post("messages/send", {"raw": raw_b64})
-    print(f"[OK] Sent. Message ID: {result.get('id')}")
-    print(f"     Thread ID: {result.get('threadId')}")
+    _print_rows(_list_messages("in:inbox", limit))
 
 
 def cmd_search(query, limit=10):
-    result = api_get(f"messages?maxResults={limit}&q={urllib.parse.quote(query)}")
-    messages = result.get("messages", [])
-    if not messages:
-        print(f"No results for: {query}")
-        return
-    print(f"{'ID':<30}  {'DATE':<22}  SUBJECT")
-    print("─" * 90)
-    for msg in messages:
-        detail = api_get(f"messages/{msg['id']}?format=raw")
-        subj = extract_subject(decode_mime(detail["raw"]))
-        date = detail.get("internalDate", "")
-        date_str = datetime.fromtimestamp(int(date) / 1000).strftime("%Y-%m-%d %H:%M") if date else "unknown"
-        print(f"{msg['id']:<30}  {date_str:<22}  {subj[:50]}")
+    _print_rows(_list_messages(query, limit))
+
+
+def _body_text(mime):
+    part = mime.get_body(preferencelist=("plain", "html"))
+    if part is None:
+        return ""
+    text = part.get_content()
+    if part.get_content_type() == "text/html":
+        text = re.sub(r"(?is)<(script|style).*?</\1>", "", text)
+        text = re.sub(r"(?i)<br\s*/?>|</p>|</div>", "\n", text)
+        text = html.unescape(re.sub(r"<[^>]+>", "", text))
+        text = re.sub(r"\n\s*\n+", "\n\n", text)
+    return text.strip()
+
+
+def cmd_read(message_id, max_chars=8000):
+    d = api_get(f"messages/{message_id}?format=raw")
+    mime = message_from_bytes(base64.urlsafe_b64decode(d["raw"] + "=" * (-len(d["raw"]) % 4)),
+                              policy=policy.default)
+    for k in ("From", "To", "Cc", "Date", "Subject"):
+        if mime[k]:
+            print(f"{k}: {mime[k]}")
+    print(f"Thread-Id: {d.get('threadId')}")
+    atts = [p.get_filename() for p in mime.iter_attachments() if p.get_filename()]
+    if atts:
+        print("Attachments: " + ", ".join(atts))
+    print("─" * 80)
+    body = _body_text(mime)
+    print(body[:max_chars])
+    if len(body) > max_chars:
+        print(f"\n... ({len(body) - max_chars} more chars)")
+
+
+def _send(msg, thread_id=None):
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
+    payload = {"raw": raw}
+    if thread_id:
+        payload["threadId"] = thread_id
+    result = api_post("messages/send", payload)
+    print(f"[OK] Sent. Message ID: {result.get('id')}  Thread ID: {result.get('threadId')}")
+
+
+def cmd_send(to, subject, body):
+    msg = EmailMessage()
+    msg["To"] = to
+    msg["Subject"] = subject
+    msg.set_content(body)
+    _send(msg)
+
+
+def cmd_reply(to, thread_id, body):
+    thread = api_get(f"threads/{thread_id}?format=metadata"
+                     "&metadataHeaders=Subject&metadataHeaders=Message-ID&metadataHeaders=References")
+    last = _headers(thread["messages"][-1])
+    subject = last.get("subject", "")
+    if not subject.lower().startswith("re:"):
+        subject = "Re: " + subject
+    msg = EmailMessage()
+    msg["To"] = to
+    msg["Subject"] = subject
+    if last.get("message-id"):
+        msg["In-Reply-To"] = last["message-id"]
+        msg["References"] = (last.get("references", "") + " " + last["message-id"]).strip()
+    msg.set_content(body)
+    _send(msg, thread_id)
 
 
 def cmd_status():
@@ -335,48 +505,50 @@ def cmd_status():
         print("No token. Run: python3 gmail_oauth.py setup")
         return
     print(f"Token file: {TOKEN_FILE}")
-    if token.get("expires_at"):
-        remaining = int(token["expires_at"] - datetime.now().timestamp())
-        print(f"Access token: {'valid for ' + str(remaining) + 's' if remaining > 0 else 'EXPIRED (will auto-refresh)'}")
-    print(f"Refresh token: {'present (auto-refresh works)' if token.get('refresh_token') else 'MISSING'}")
+    remaining = int(token.get("expires_at", 0) - time.time())
+    print("Access token: " + (f"valid for {remaining}s" if remaining > 0 else "expired (auto-refreshes on next call)"))
+    print("Refresh token: " + ("present (auto-refresh works)" if token.get("refresh_token") else "MISSING"))
+    print(f"Scope: {token.get('scope', '?')}")
 
 
 # ─── Main ────────────────────────────────────────────────────────────────
 def main():
-    if len(sys.argv) < 2:
+    args = sys.argv[1:]
+    if not args:
         print(__doc__)
-        sys.exit(0)
+        return
+    cmd, rest = args[0].lower(), args[1:]
 
-    cmd = sys.argv[1].lower()
+    def need(n, usage):
+        if len(rest) < n:
+            _die("Usage: gmail_oauth.py " + usage)
 
     if cmd == "setup":
-        oauth_setup()
+        timeout = 300
+        if "--timeout" in rest:
+            timeout = int(rest[rest.index("--timeout") + 1])
+        oauth_setup(timeout=timeout, no_browser="--no-browser" in rest)
+    elif cmd == "auth-url":
+        print_auth_url()
     elif cmd == "import-code":
-        if len(sys.argv) < 3:
-            print("Usage: gmail_oauth.py import-code 'http://localhost:8080/?code=...'")
-            sys.exit(1)
-        import_code(sys.argv[2])
+        need(1, "import-code 'http://127.0.0.1:PORT/?state=...&code=...'")
+        import_code(rest[0])
     elif cmd == "status":
         cmd_status()
     elif cmd == "list":
-        limit = int(sys.argv[2]) if len(sys.argv) > 2 else 10
-        cmd_list(limit)
-    elif cmd == "read":
-        if len(sys.argv) < 3:
-            print("Usage: gmail_oauth.py read MESSAGE_ID")
-            sys.exit(1)
-        cmd_read(sys.argv[2])
-    elif cmd == "send":
-        if len(sys.argv) < 5:
-            print("Usage: gmail_oauth.py send TO SUBJECT BODY")
-            sys.exit(1)
-        cmd_send(sys.argv[2], sys.argv[3], sys.argv[4])
+        cmd_list(int(rest[0]) if rest else 10)
     elif cmd == "search":
-        if len(sys.argv) < 3:
-            print("Usage: gmail_oauth.py search QUERY")
-            sys.exit(1)
-        limit = int(sys.argv[3]) if len(sys.argv) > 3 else 10
-        cmd_search(sys.argv[2], limit)
+        need(1, "search QUERY [N]")
+        cmd_search(rest[0], int(rest[1]) if len(rest) > 1 else 10)
+    elif cmd == "read":
+        need(1, "read MESSAGE_ID")
+        cmd_read(rest[0])
+    elif cmd == "send":
+        need(3, "send TO SUBJECT BODY")
+        cmd_send(rest[0], rest[1], rest[2])
+    elif cmd == "reply":
+        need(3, "reply TO THREAD_ID BODY")
+        cmd_reply(rest[0], rest[1], rest[2])
     else:
         print(f"Unknown command: {cmd}")
         print(__doc__)
@@ -384,4 +556,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except RuntimeError as e:
+        _die(f"ERROR: {e}")

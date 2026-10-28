@@ -54,19 +54,32 @@ chmod 600 ~/.config/gmail-oauth/env
 ### Step 3: Run setup (opens browser for the user)
 
 ```bash
-source ~/.config/gmail-oauth/env && python3 ~/gmail_oauth.py setup
+python3 ~/gmail_oauth.py setup --timeout 180
 ```
 
-This opens the user's default browser to Google sign-in.
-**The user only needs to: sign in to their gm account → click "Allow".**
+- On WSL the script opens the **Windows** default browser (via `wslview` /
+  `rundll32.exe`); on Windows/macOS/Linux desktop it opens the normal browser.
+- The script ALWAYS prints a line starting with `AUTH_URL:`.
+  **Immediately show that full URL to the user** as a clickable link, in case
+  no browser window appeared (headless server, remote session, sandbox).
+- **The user only needs to: sign in to their gm account → click "Allow".**
+  The browser then shows "Gmail 授權完成" and the command exits with `[OK] Authorized`.
+- The command blocks up to `--timeout` seconds waiting for the callback.
+  Run it with a tool timeout longer than that (e.g. 240 s).
 
-If the browser callback page shows an error (404 / cannot connect),
-ask the user to copy the full URL from the browser address bar and
-paste it back. Then run:
+If the command exits with code 2 ("No callback received") — e.g. the agent
+runs on a different machine than the browser — ask the user to copy the full
+address from the browser bar after clicking Allow (it starts with
+`http://127.0.0.1:8765/?state=...&code=...`, the page itself may fail to load)
+and paste it back. Then run:
 
 ```bash
 python3 ~/gmail_oauth.py import-code '<the pasted URL>'
 ```
+
+`import-code` must use the URL from the **latest** `setup`/`auth-url` run
+(each run creates a new one-time login in `~/.config/gmail-oauth/pending.json`).
+Never use `urn:ietf:wg:oauth:2.0:oob` — Google has disabled the OOB flow.
 
 ### Step 4: Verify
 
@@ -113,11 +126,17 @@ python3 ~/gmail_oauth.py search "after:2026-10-01"
 python3 ~/gmail_oauth.py search "from:prac@cute.edu.tw after:2026-10-01"
 ```
 
+`list` and `search` print `ID`, `THREAD`, date, sender and subject
+(`*` before the subject = unread). Use the ID for `read`, the THREAD for `reply`.
+
 ### Read a message
 
 ```bash
 python3 ~/gmail_oauth.py read MESSAGE_ID
 ```
+
+Prints decoded headers (Chinese subjects OK), attachment names and the
+plain-text body (HTML-only mail is converted to text).
 
 ### Send an email
 
@@ -179,11 +198,15 @@ No App Password. No 2FA requirement. No IMAP/SMTP config.
 1. **Token file location** — `~/.config/gmail-oauth/token.json`. If it's
    missing or corrupted, run setup again.
 
-2. **Browser must be available** — the OAuth flow opens a browser and listens
-   on `localhost:8080`. Headless servers need a manual redirect.
+2. **Browser / callback** — the OAuth flow listens on `http://127.0.0.1:8765`
+   (override with `GMAIL_OAUTH_PORT`; falls back to a random free port).
+   WSL2 forwards Windows `127.0.0.1` to WSL automatically. If the agent and the
+   browser are on different machines, use `import-code` (Step 3).
 
 3. **Token auto-refresh** — the access token expires every 1 hour, but the
    script auto-refreshes it using the refresh token. No user action needed.
+   If a command prints `invalid_grant`, the user revoked access or changed
+   password — run `setup` again. `NO_TOKEN` means setup was never completed.
 
 4. **Multiple accounts** — if the user has multiple Google accounts, the
    browser will let them pick which one to authorize.

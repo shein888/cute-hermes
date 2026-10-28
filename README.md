@@ -1,6 +1,6 @@
 # Cute Hermes Skills
 
-Shared Hermes Agent skills for the CUTE (National Chiao Tung University) IT team.
+Shared Hermes Agent skills for the CUTE (中國科技大學, China University of Technology) IT team.
 
 ## Installation
 
@@ -24,6 +24,7 @@ Read and search Outlook mail via PowerShell COM (MAPI). Works on Windows and WSL
 ```bash
 # WSL (auto-deploys on first use)
 bash ~/outlook-search.sh -Sender "prac" -Date "2026-10-16"
+bash ~/outlook-search.sh -Diagnose      # why does it not work on this PC?
 
 # Pure Windows
 outlook-search.cmd -Sender "prac" -Date "2026-10-16"
@@ -39,6 +40,7 @@ Read and send Gmail / Google Workspace mail via Gmail API with OAuth2.
 
 ```bash
 # Auto-deploys on first use (browser opens for auth)
+python3 ~/gmail_oauth.py setup   # first time: browser opens, sign in, Allow
 python3 ~/gmail_oauth.py list
 ```
 
