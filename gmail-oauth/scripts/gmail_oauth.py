@@ -139,8 +139,6 @@ def oauth_setup():
         "response_type": "code",
         "scope": SCOPES,
         "access_type": "offline",
-        "include_granted_scopes": "true",
-        "prompt": "consent",
     })
     auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{params}"
 
