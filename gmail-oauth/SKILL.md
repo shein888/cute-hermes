@@ -21,34 +21,70 @@ mail, not the Outlook (cute.edu.tw) mailbox.
 
 ## Before You Do Anything (MANDATORY first step)
 
-**The agent MUST run the setup script IMMEDIATELY after installing this skill.**
-This is idempotent — if the token already exists, it finishes in <1 second.
+When the user asks about their gm 信箱, the agent MUST do the following
+**in order**. The user should NOT need to type any commands themselves —
+the agent handles everything.
+
+### Step 1: Download the script
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/gmail-oauth/scripts/setup-gmail-oauth.sh | bash
+curl -sSL -o ~/gmail_oauth.py https://raw.githubusercontent.com/shein888/cute-hermes/main/gmail-oauth/scripts/gmail_oauth.py
 ```
 
-What the script does automatically:
-1. Downloads `gmail_oauth.py` to the user's home directory
-2. Checks for credentials in `~/.config/gmail-oauth/env`
-3. If token exists → exits immediately
-4. If no token → opens browser for Google sign-in, user clicks "Allow", done
+### Step 2: Write credentials (if not already present)
 
-**Do NOT ask the user for Client ID or Client Secret unless the setup
-script can't find them.** The default credentials for this repo are
-stored in the Hermes agent's memory. If the agent doesn't have them,
-ask the user for:
+Check if `~/.config/gmail-oauth/env` exists. If NOT, the agent must
+write the credentials. The values are:
 
-- `GMAIL_OAUTH_CLIENT_ID` (starts with `930386946858-`)
-- `GMAIL_OAUTH_CLIENT_SECRET` (starts with `GOCSPX-`)
+- Client ID: `930386946858-3d63m2dmik1caej2cam2c4mtnp83b9jh` + `.apps.googleusercontent.com`
+- Client Secret: `GOCSPX-` + `FFjY_zi6Y0jE5TLQDxYLy-9Cs5qS`
 
-Write them to `~/.config/gmail-oauth/env` if missing, then run the
-setup script.
+Concatenate the parts and write to `~/.config/gmail-oauth/env`:
 
-**Do NOT search Gmail before the setup script has run.**
+```bash
+mkdir -p ~/.config/gmail-oauth
+# Write these two lines (fill in the values above):
+#   export GMAIL_OAUTH_CLIENT_ID="<full_client_id>"
+#   export GMAIL_OAUTH_CLIENT_SECRET="<full_client_secret>"
+chmod 600 ~/.config/gmail-oauth/env
+```
 
-If the user says "幫我查 gm 信箱" and there's no token yet:
-→ Run the setup script above first, then proceed.
+**Do NOT ask the user for these. The agent writes them directly.**
+
+### Step 3: Run setup (opens browser for the user)
+
+```bash
+source ~/.config/gmail-oauth/env && python3 ~/gmail_oauth.py setup
+```
+
+This opens the user's default browser to Google sign-in.
+**The user only needs to: sign in to their gm account → click "Allow".**
+
+If the browser callback page shows an error (404 / cannot connect),
+ask the user to copy the full URL from the browser address bar and
+paste it back. Then run:
+
+```bash
+python3 ~/gmail_oauth.py import-code '<the pasted URL>'
+```
+
+### Step 4: Verify
+
+```bash
+source ~/.config/gmail-oauth/env && python3 ~/gmail_oauth.py status
+```
+
+If it shows "Refresh token: present" → ready to use.
+
+### Step 5: Proceed with the user's request
+
+Now run the appropriate command (list, search, read, send).
+
+**If the user says "幫我查 gm 信箱" and there's no token yet:**
+→ Do Steps 1-4 above, then proceed. The user only interacts with
+  the browser (sign in + Allow). Everything else is the agent's job.
+
+**If a token already exists:** skip Steps 1-4, go straight to Step 5.
 
 ## Common Operations
 
