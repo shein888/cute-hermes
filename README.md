@@ -7,6 +7,29 @@ Hermes Agent skills for the CUTE (中國科技大學, China University of Techno
 | `outlook-com` | Search / read classic Outlook mail (cute.edu.tw) via PowerShell COM. WSL or Windows. |
 | `gmail-oauth` | Read / search / send / reply gm 信箱 (gm.cute.edu.tw) via Gmail API + OAuth2. |
 
+## 標準流程（每台 PC：移除 → 重新安裝）
+
+第一次安裝、版本更新、或 skill 不正常時，都用同一套流程。
+**請在 PowerShell 執行，不要在 Hermes 聊天裡叫 agent 做。**
+
+```powershell
+hermes skills tap remove https://github.com/shein888/cute-hermes
+hermes skills tap add shein888/cute-hermes
+hermes skills uninstall outlook-com --yes
+hermes skills uninstall gmail-oauth --yes
+hermes skills install shein888/cute-hermes/skills/outlook-com --yes
+hermes skills install shein888/cute-hermes/skills/gmail-oauth --yes
+hermes skills list
+```
+
+- 前 4 行如果出現 `not found`、`not a hub-installed skill`、`already exists` 都是正常的
+  （代表原本就沒有、或是舊版手動複製的），繼續執行下一行即可。
+- 最後 `hermes skills list` 要看到 `outlook-com` 4.x 和 `gmail-oauth` 2.x。
+- 裝完後在 Hermes **開一個新的對話**再使用：
+  「幫我查 Outlook 最近三天的信」、「幫我看 gm 信箱有沒有新信」。
+- gm 信箱第一次使用時，agent 會給一個 Google 授權連結：用 gm.cute.edu.tw 帳號登入 → 按「允許」→ 回 agent 說「好了」。
+  token 存在使用者自己的資料夾，移除 / 重新安裝 skill 不需要重新授權。
+
 ## Install (each PC, once)
 
 Install from a terminal or the Desktop app — **not by asking the agent in chat**
