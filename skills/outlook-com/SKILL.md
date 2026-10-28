@@ -1,9 +1,9 @@
 ---
 name: outlook-com
 description: "Search and read the user's Outlook (classic Outlook desktop, cute.edu.tw) mail via PowerShell COM/MAPI. Use when the user asks to read, search or summarize Outlook mail, or mentions Outlook / 學校信箱 cute.edu.tw. Works from WSL or Windows. For gm.cute.edu.tw (gm 信箱) use the gmail-oauth skill instead."
-version: 4.1.0
+version: 4.1.1
 author: shein
-platforms: [windows, wsl]
+platforms: [windows, linux]   # "linux" = Hermes in WSL (Hermes has no "wsl" platform name)
 metadata:
   hermes:
     tags: [outlook, email, mapi, com, powershell, windows]

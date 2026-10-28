@@ -12,6 +12,7 @@ Usage:
   python3 gmail_oauth.py auth-url        # Print consent URL only (no waiting)
   python3 gmail_oauth.py import-code URL # Exchange a pasted callback URL
   python3 gmail_oauth.py status          # Check token status
+  python3 gmail_oauth.py logout          # Revoke + delete token (re-bind with setup)
   python3 gmail_oauth.py list [N]        # List inbox (default 10)
   python3 gmail_oauth.py search QUERY [N]
   python3 gmail_oauth.py read MESSAGE_ID
@@ -624,6 +625,31 @@ def cmd_reply(to, thread_id, body):
     _send(msg, thread_id)
 
 
+def cmd_logout():
+    """Revoke the grant at Google and delete the local token (then run setup to re-bind)."""
+    token = load_token()
+    if not token:
+        print("No token on this PC — nothing to remove.")
+        return
+    tok = token.get("refresh_token") or token.get("access_token")
+    req = urllib.request.Request(
+        os.environ.get("GMAIL_OAUTH_REVOKE_ENDPOINT", "https://oauth2.googleapis.com/revoke"),
+        data=urllib.parse.urlencode({"token": tok}).encode(),
+        headers={"Content-Type": "application/x-www-form-urlencoded"})
+    try:
+        with urllib.request.urlopen(req, timeout=30):
+            pass  # 200 with an empty body = revoked
+        print("[OK] Access revoked at Google.")
+    except Exception as e:  # already revoked / offline: still remove the local copy
+        print(f"[..] Revoke skipped ({e}).")
+    for f in (TOKEN_FILE, PENDING_FILE, LISTENER_FILE):
+        try:
+            f.unlink()
+        except OSError:
+            pass
+    print(f"[OK] Local token removed ({TOKEN_FILE}). Run setup to authorize again.")
+
+
 def cmd_status():
     token = load_token()
     if not token:
@@ -665,6 +691,8 @@ def main():
         import_code(rest[0])
     elif cmd == "status":
         cmd_status()
+    elif cmd == "logout":
+        cmd_logout()
     elif cmd == "list":
         cmd_list(int(rest[0]) if rest else 10)
     elif cmd == "search":

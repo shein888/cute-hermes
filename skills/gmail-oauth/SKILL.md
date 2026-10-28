@@ -1,9 +1,9 @@
 ---
 name: gmail-oauth
 description: "Read, search, send and reply to Gmail (Google Workspace) mail via the Gmail API with OAuth2. Use when the user mentions 'gm信箱', 'gm 帳號', 'gm account', gm.cute.edu.tw, or asks to read/search/send Gmail. No App Password or 2-Step Verification needed."
-version: 2.1.0
+version: 2.1.1
 author: shein
-platforms: [linux, wsl, windows, macos]
+platforms: [windows, linux, macos]
 metadata:
   hermes:
     tags: [gmail, email, oauth2, gmail-api, google-workspace, gm信箱]
@@ -121,3 +121,12 @@ before running `send` or `reply`.**
 | `Python 3 not found` | Install Python once (`winget install Python.Python.3.12`), then retry |
 
 The access token expires every hour and is refreshed automatically.
+
+To switch to another gm account or start over (only when the user asks, or
+`status` shows `Refresh token: MISSING` / `invalid_grant`):
+
+```bash
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" logout
+```
+
+then run Step 2 again.

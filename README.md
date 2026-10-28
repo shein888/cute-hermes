@@ -104,6 +104,8 @@ cute-hermes/
 ```
 
 Rules for editing:
+- `platforms:` may only use `windows`, `linux`, `macos`. Hermes has no `wsl` value —
+  Hermes in WSL reports `linux`, so a skill limited to `[windows, wsl]` is hidden there.
 - Reference scripts in SKILL.md as `bash "${HERMES_SKILL_DIR}/scripts/..."` — always
   in double quotes: on Windows the path has backslashes and may contain spaces.
 - Do **not** put `curl ... | bash` (or any remote download-and-run) in SKILL.md or
