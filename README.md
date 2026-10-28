@@ -9,7 +9,7 @@ hermes skills tap add https://github.com/shein888/cute-hermes
 ```
 
 That's it. When you ask Hermes to read Outlook or Gmail, it will
-automatically run the setup script (idempotent) and deploy the tools.
+automatically run the setup script and deploy the tools.
 
 ## Skills
 
@@ -29,17 +29,17 @@ bash ~/outlook-search.sh -Sender "prac" -Date "2026-10-16"
 outlook-search.cmd -Sender "prac" -Date "2026-10-16"
 ```
 
-### gmail-himalaya
+### gmail-oauth
 
-Read and send Gmail / Google Workspace mail via Himalaya CLI.
+Read and send Gmail / Google Workspace mail via Gmail API with OAuth2.
 
-- One-liner deploy: installs himalaya + writes config + verifies
-- Requires App Password (not account password) for Google Workspace
-- Ask the agent: "幫我查 gm 信箱"
+- No App Password needed (uses OAuth2 with auto-refresh)
+- No 2FA required
+- First use opens browser for Google sign-in, then done forever
 
 ```bash
-# Auto-deploys on first use (agent asks for App Password if needed)
-~/.local/bin/himalaya envelope list --page-size 5
+# Auto-deploys on first use (browser opens for auth)
+python3 ~/gmail_oauth.py list
 ```
 
 ## Repo Structure
@@ -54,8 +54,9 @@ cute-hermes/
 │       ├── outlook-search.cmd
 │       ├── outlook-search.sh
 │       └── setup-outlook-search.sh
-└── gmail-himalaya/
+└── gmail-oauth/
     ├── SKILL.md
     └── scripts/
-        └── setup-gmail-himalaya.sh
+        ├── gmail_oauth.py
+        └── setup-gmail-oauth.sh
 ```
