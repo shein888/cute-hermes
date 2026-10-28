@@ -1,64 +1,64 @@
 # Cute Hermes Skills
 
-Shared Hermes Agent skills for the CUTE (中國科技大學, China University of Technology) IT team.
+Hermes Agent skills for the CUTE (中國科技大學, China University of Technology) IT team.
 
-## Installation
+| Skill | What it does |
+|-------|--------------|
+| `outlook-com` | Search / read classic Outlook mail (cute.edu.tw) via PowerShell COM. WSL or Windows. |
+| `gmail-oauth` | Read / search / send / reply gm 信箱 (gm.cute.edu.tw) via Gmail API + OAuth2. |
 
-```bash
-hermes skills tap add https://github.com/shein888/cute-hermes
-```
-
-That's it. When you ask Hermes to read Outlook or Gmail, it will
-automatically run the setup script and deploy the tools.
-
-## Skills
-
-### outlook-com
-
-Read and search Outlook mail via PowerShell COM (MAPI). Works on Windows and WSL.
-
-- No WSL required (uses `.cmd` wrapper)
-- No password needed (uses authenticated Outlook profile)
-- Search inbox + subfolders by keyword, sender, date
+## Install (each PC, once)
 
 ```bash
-# WSL (auto-deploys on first use)
-bash ~/outlook-search.sh -Sender "prac" -Date "2026-10-16"
-bash ~/outlook-search.sh -Diagnose      # why does it not work on this PC?
-
-# Pure Windows
-outlook-search.cmd -Sender "prac" -Date "2026-10-16"
+hermes skills tap add shein888/cute-hermes
+hermes skills install shein888/cute-hermes/skills/outlook-com
+hermes skills install shein888/cute-hermes/skills/gmail-oauth
 ```
 
-### gmail-oauth
+- Use `owner/repo` (`shein888/cute-hermes`) for `tap add`, **not** the full
+  `https://github.com/...` URL — Hermes stores the text as-is and the URL form
+  finds nothing. If you already added the URL form, remove it:
+  `hermes skills tap remove https://github.com/shein888/cute-hermes`
+- `tap add` only registers this repo as a source (`hermes skills search outlook`
+  will then list the skills); `install` is what copies them to `~/.hermes/skills/`.
+- Scripts are installed together with each skill. Nothing is downloaded with curl.
 
-Read and send Gmail / Google Workspace mail via Gmail API with OAuth2.
+Then just ask Hermes: 「幫我查 Outlook 最近三天的信」 or 「幫我看 gm 信箱有沒有新信」.
+The first gm request opens a Google sign-in page once per PC.
 
-- No App Password needed (uses OAuth2 with auto-refresh)
-- No 2FA required
-- First use opens browser for Google sign-in, then done forever
+## Update (after this repo changes)
 
 ```bash
-# Auto-deploys on first use (browser opens for auth)
-python3 ~/gmail_oauth.py setup   # first time: browser opens, sign in, Allow
-python3 ~/gmail_oauth.py list
+hermes skills update            # all outdated hub skills
+hermes skills update outlook-com
 ```
 
-## Repo Structure
+If a skill was edited locally on that PC, `update` skips it; use
+`hermes skills update outlook-com --force` to overwrite.
+
+## Repo layout (required by `hermes skills tap`)
+
+Taps scan **one level under `skills/`**, so every skill lives in its own folder there:
 
 ```
 cute-hermes/
 ├── README.md
-├── outlook-com/
-│   ├── SKILL.md
-│   └── scripts/
-│       ├── outlook-search.ps1
-│       ├── outlook-search.cmd
-│       ├── outlook-search.sh
-│       └── setup-outlook-search.sh
-└── gmail-oauth/
-    ├── SKILL.md
-    └── scripts/
-        ├── gmail_oauth.py
-        └── setup-gmail-oauth.sh
+└── skills/
+    ├── outlook-com/
+    │   ├── SKILL.md
+    │   └── scripts/
+    │       ├── outlook-search.ps1   # core (Windows PowerShell 5.1, UTF-8 BOM)
+    │       ├── outlook-search.cmd   # Windows wrapper
+    │       └── outlook-search.sh    # WSL wrapper
+    └── gmail-oauth/
+        ├── SKILL.md
+        └── scripts/
+            └── gmail_oauth.py
 ```
+
+Rules for editing:
+- Reference scripts in SKILL.md as `${HERMES_SKILL_DIR}/scripts/...`.
+- Do **not** put `curl ... | bash` (or any remote download-and-run) in SKILL.md or
+  scripts: the Hermes install scanner rates it critical and blocks the install,
+  even with `--force`.
+- Keep user data (tokens, results) outside the skill folder; `update` replaces the folder.

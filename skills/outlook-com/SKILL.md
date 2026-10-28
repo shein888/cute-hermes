@@ -1,0 +1,96 @@
+---
+name: outlook-com
+description: "Search and read the user's Outlook (classic Outlook desktop, cute.edu.tw) mail via PowerShell COM/MAPI. Use when the user asks to read, search or summarize Outlook mail, or mentions Outlook / 學校信箱 cute.edu.tw. Works from WSL or Windows. For gm.cute.edu.tw (gm 信箱) use the gmail-oauth skill instead."
+version: 4.0.0
+author: shein
+platforms: [windows, wsl]
+metadata:
+  hermes:
+    tags: [outlook, email, mapi, com, powershell, windows]
+    homepage: https://learn.microsoft.com/en-us/office/client-developer/outlook/
+---
+
+# Outlook COM (PowerShell MAPI)
+
+Searches the already-signed-in **classic Outlook** profile through COM. No
+password needed. The scripts ship with this skill — nothing to download.
+
+| Agent runs in | Command |
+|---------------|---------|
+| WSL (normal case) | `bash ${HERMES_SKILL_DIR}/scripts/outlook-search.sh <args>` |
+| Windows (cmd / PowerShell) | `cmd /c "${HERMES_SKILL_DIR}\scripts\outlook-search.cmd" <args>` |
+
+The WSL wrapper copies `outlook-search.ps1` to `%USERPROFILE%\.cute-hermes\`,
+runs it with Windows PowerShell and prints the result (UTF-8). The result is
+also saved to `%USERPROFILE%\search-result.txt`.
+
+**Rules**
+- Never hard-code a Windows username or path such as `C:\Users\<name>`.
+- Do **not** kill Outlook — the script attaches to the running Outlook or starts it.
+- Use a tool timeout of at least 120 s (first COM call 10-30 s; `-Recursive` up to 2 min).
+
+## Search
+
+| Parameter | Description |
+|-----------|-------------|
+| `-Keyword` | Subject contains (case-insensitive) |
+| `-Sender` | Sender e-mail or display name contains (case-insensitive) |
+| `-Date` | One day, `yyyy-MM-dd` |
+| `-Days` | Last N days |
+| `-Folder` | One sub-folder of the Inbox, e.g. `"02-圖資中心"` |
+| `-Recursive` | Every folder of the default mailbox (slower) |
+| `-Max` | Stop after N matches (default 100) |
+| `-Diagnose` | Check this PC instead of searching |
+
+```bash
+O="bash ${HERMES_SKILL_DIR}/scripts/outlook-search.sh"
+$O -Days 1
+$O -Keyword "114-2"
+$O -Sender "prac" -Date "2026-10-16"
+$O -Keyword "法規" -Days 3
+$O -Folder "02-圖資中心" -Days 1
+$O -Keyword "test" -Recursive
+```
+
+Without `-Recursive` the search covers the Inbox and its direct sub-folders.
+The Inbox is found with `GetDefaultFolder`, so any Outlook language
+(收件匣 / 收件箱 / Inbox) and any account name works. Prefer `-Days`/`-Date`:
+the scan stops at the first older mail, so it is fast on big mailboxes.
+
+Use the user's own words as the keyword. Pick one distinctive substring
+(e.g. `"114-2"` from 「檢核114-2、115-1全校法規彙編作業」) instead of splitting it
+into several guesses. "FW:", "RE:", "【重要】" prefixes do not matter.
+
+Exit codes: 0 = OK, 2 = bad arguments, 3 = Outlook / COM / environment
+problem (the reason is printed).
+
+## When it fails on a PC → run the diagnose
+
+```bash
+bash ${HERMES_SKILL_DIR}/scripts/outlook-search.sh -Diagnose
+```
+
+Explain the cause to the user in plain words:
+
+| Diagnose shows | Meaning / fix |
+|----------------|---------------|
+| `ComRegistered: False`, `NewOutlookInstalled: True` | The PC uses **New Outlook** (olk.exe), which has no COM. Turn off the "New Outlook" toggle to go back to classic Outlook, or install Microsoft 365 desktop Outlook. |
+| `ComRegistered: False` | Classic Outlook is not installed. |
+| `COM test: FAILED ... 80080005` | Outlook and PowerShell run with different privileges (one is "Run as administrator"). Run both normally. |
+| `AntivirusRegistered: NONE` or `ObjectModelGuardPolicy` not default; search hangs | Outlook shows a hidden "A program is trying to access e-mail address information" prompt. Fix the antivirus status (File > Options > Trust Center > Programmatic Access) or ask IT to allow programmatic access by GPO. |
+| `ExecutionPolicy: MachinePolicy=AllSigned` / `Restricted` | Group Policy blocks scripts; `-ExecutionPolicy Bypass` cannot override it. Ask IT. |
+| `powershell.exe not reachable` | WSL interop is off (`/etc/wsl.conf`). |
+| Outlook asks which profile to use | Control Panel > Mail > Show Profiles > "Always use this profile". |
+
+## Item classes (for custom PowerShell)
+
+| Class | Type |
+|-------|------|
+| 43 | MailItem |
+| 26 | AppointmentItem |
+| 13 | ContactItem |
+| 31 | TaskItem |
+
+If you write extra PowerShell, save it as a `.ps1` with UTF-8 BOM
+(Python `encoding='utf-8-sig'`) and run it with `-File`; never pass Chinese
+text through `powershell.exe -Command`.

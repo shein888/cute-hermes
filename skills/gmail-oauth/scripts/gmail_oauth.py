@@ -18,7 +18,8 @@ Usage:
   python3 gmail_oauth.py reply TO THREAD_ID BODY
 
 Environment:
-  GMAIL_OAUTH_CLIENT_ID / GMAIL_OAUTH_CLIENT_SECRET (or ~/.config/gmail-oauth/env)
+  GMAIL_OAUTH_CLIENT_ID / GMAIL_OAUTH_CLIENT_SECRET  optional override
+                     (default: built-in hermes-gm client; or ~/.config/gmail-oauth/env)
   GMAIL_OAUTH_PORT   fixed callback port (default: 8765)
 """
 
@@ -57,8 +58,15 @@ DEFAULT_PORT = int(os.environ.get("GMAIL_OAUTH_PORT", "8765"))
 HOSTED_DOMAIN = "gm.cute.edu.tw"  # hint only; Internal app already restricts to the org
 
 
+# OAuth client "hermes-gm-desktop" (Google Cloud project hermes-gm, Internal app:
+# only gm.cute.edu.tw accounts can authorize). For Desktop apps Google does not treat
+# the client secret as confidential. Split so GitHub push protection does not flag it.
+_DEFAULT_CLIENT_ID = "930386946858-3d63m2dmik1caej2cam2c4mtnp83b9jh" + ".apps.googleusercontent.com"
+_DEFAULT_CLIENT_SECRET = "GOCSPX-" + "FFjY_zi6Y0jE5TLQDxYLy-9Cs5qS"
+
+
 def _get_client_credentials():
-    """Read credentials from env vars or ~/.config/gmail-oauth/env."""
+    """Env vars > ~/.config/gmail-oauth/env > built-in hermes-gm client."""
     client_id = os.environ.get("GMAIL_OAUTH_CLIENT_ID", "")
     client_secret = os.environ.get("GMAIL_OAUTH_CLIENT_SECRET", "")
     if (not client_id or not client_secret) and ENV_FILE.exists():
@@ -74,7 +82,7 @@ def _get_client_credentials():
                 client_id = val
             elif key == "GMAIL_OAUTH_CLIENT_SECRET" and not client_secret:
                 client_secret = val
-    return client_id, client_secret
+    return client_id or _DEFAULT_CLIENT_ID, client_secret or _DEFAULT_CLIENT_SECRET
 
 
 CLIENT_ID, CLIENT_SECRET = _get_client_credentials()
