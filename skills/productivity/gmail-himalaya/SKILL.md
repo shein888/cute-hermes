@@ -1,6 +1,6 @@
 ---
 name: gmail-himalaya
-description: "Read and send Gmail (Google Workspace) mail via Himalaya CLI. Use when the user asks to read, search, reply to, or send Gmail emails, or mentions managing their gm.cute.edu.tw or other Google Workspace mailbox."
+description: "Read and send Gmail (Google Workspace) mail via Himalaya CLI. Use when the user asks to read, search, reply to, or send Gmail emails, or mentions 'gm信箱', 'gm account', managing their gm.cute.edu.tw or other Google Workspace mailbox."
 version: 1.0.0
 author: shein
 platforms: [windows, wsl, linux]
@@ -10,10 +10,14 @@ metadata:
     homepage: https://pimalaya.org/docs/himalaya/
 ---
 
-# Gmail via Himalaya CLI
+# Gmail via Himalaya CLI (gm 信箱)
 
 Read and send Gmail / Google Workspace mail via the [Himalaya](https://github.com/pimalaya/himalaya) CLI.
 Works on WSL, Windows (via WSL), and Linux.
+
+The user's team calls this the **"gm 信箱"** (gm mailbox) — any mention of
+"gm信箱", "gm account", or "gm.cute.edu.tw" refers to this Google Workspace
+mail, not the Outlook (cute.edu.tw) mailbox.
 
 **IMPORTANT: Google Workspace requires an App Password for IMAP/SMTP — the regular
 account password will NOT work.** If the user has 2FA enabled (required for all
