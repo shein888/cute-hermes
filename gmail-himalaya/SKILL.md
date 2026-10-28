@@ -31,7 +31,7 @@ cute.edu.tw accounts), they must generate an App Password first.
 This is idempotent — if already deployed, it finishes in <1 second:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/skills/productivity/gmail-himalaya/scripts/setup-gmail-himalaya.sh | bash -s -- "USER_EMAIL" "APP_PASSWORD"
+curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/gmail-himalaya/scripts/setup-gmail-himalaya.sh | bash -s -- "USER_EMAIL" "APP_PASSWORD"
 ```
 
 If the user hasn't given credentials yet, ask:
@@ -227,13 +227,13 @@ EOF
 **One-liner deploy (agent can run this for the user):**
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/skills/productivity/gmail-himalaya/scripts/setup-gmail-himalaya.sh | bash
+curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/gmail-himalaya/scripts/setup-gmail-himalaya.sh | bash
 ```
 
 Or with credentials pre-filled (agent can run non-interactively):
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/skills/productivity/gmail-himalaya/scripts/setup-gmail-himalaya.sh | bash -s -- "shein@gm.cute.edu.tw" "abcd efgh ijkl mnop"
+curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/gmail-himalaya/scripts/setup-gmail-himalaya.sh | bash -s -- "shein@gm.cute.edu.tw" "abcd efgh ijkl mnop"
 ```
 
 This installs himalaya + writes the config + verifies the connection.

@@ -1,11 +1,11 @@
 #!/bin/bash
 # setup-outlook-search.sh - One-click deploy of outlook-search.ps1
-# Usage: curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/skills/productivity/outlook-com/scripts/setup-outlook-search.sh | bash
+# Usage: curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/outlook-com/scripts/setup-outlook-search.sh | bash
 # Or:    bash setup-outlook-search.sh
 
 set -e
 
-REPO="https://raw.githubusercontent.com/shein888/cute-hermes/main/skills/productivity/outlook-com/scripts"
+REPO="https://raw.githubusercontent.com/shein888/cute-hermes/main/outlook-com/scripts"
 DEST="$HOME"
 WIN_DEST="/mnt/c/Users"
 

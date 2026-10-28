@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # setup-gmail-himalaya.sh - One-click deploy of himalaya for Gmail
-# Usage: curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/skills/productivity/gmail-himalaya/scripts/setup-gmail-himalaya.sh | bash
+# Usage: curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/gmail-himalaya/scripts/setup-gmail-himalaya.sh | bash
 # Or:    bash setup-gmail-himalaya.sh <email> <app-password>
 
 set -e

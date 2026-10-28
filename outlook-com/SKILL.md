@@ -31,7 +31,7 @@ already-authenticated Outlook profile. The PST file is read in-place; no copy re
 This is idempotent — if already deployed, it finishes in <1 second:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/skills/productivity/outlook-com/scripts/setup-outlook-search.sh | bash
+curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/outlook-com/scripts/setup-outlook-search.sh | bash
 ```
 
 This downloads `outlook-search.ps1` + `outlook-search.cmd` to the user's home
@@ -260,7 +260,7 @@ The account folder is the one containing `@` in its name (e.g., `shein@cute.edu.
 **One-liner deploy (agent can run this for the user):**
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/skills/productivity/outlook-com/scripts/setup-outlook-search.sh | bash
+curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/outlook-com/scripts/setup-outlook-search.sh | bash
 ```
 
 This downloads `outlook-search.ps1` + creates the `.cmd` wrapper to the user's
@@ -278,4 +278,4 @@ home directory. After that, the agent just runs:
 **Via Hermes skills sync:**
 - Put the skill folder in a shared GitHub repo
 - On the other PC: `hermes skills tap add <github-url>`
-- Or copy the skill folder to the other PC's `~/.hermes/skills/productivity/outlook-com/`
+- Or copy the skill folder to the other PC's `~/.hermes/outlook-com/`
