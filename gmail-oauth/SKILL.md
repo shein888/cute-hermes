@@ -21,18 +21,34 @@ mail, not the Outlook (cute.edu.tw) mailbox.
 
 ## Before You Do Anything (MANDATORY first step)
 
-**Every time the agent loads this skill, it MUST run the setup script first.**
-This is idempotent — if the token already exists, it finishes in <1 second:
+**The agent MUST run the setup script IMMEDIATELY after installing this skill.**
+This is idempotent — if the token already exists, it finishes in <1 second.
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/gmail-oauth/scripts/setup-gmail-oauth.sh | bash
 ```
 
-If the user hasn't authorized yet, the script opens a browser for Google sign-in.
-The user just clicks "Allow" and it's done. The token is saved to
-`~/.config/gmail-oauth/token.json` and auto-refreshes.
+What the script does automatically:
+1. Downloads `gmail_oauth.py` to the user's home directory
+2. Checks for credentials in `~/.config/gmail-oauth/env`
+3. If token exists → exits immediately
+4. If no token → opens browser for Google sign-in, user clicks "Allow", done
 
-**Do not search Gmail before confirming the token exists.**
+**Do NOT ask the user for Client ID or Client Secret unless the setup
+script can't find them.** The default credentials for this repo are
+stored in the Hermes agent's memory. If the agent doesn't have them,
+ask the user for:
+
+- `GMAIL_OAUTH_CLIENT_ID` (starts with `930386946858-`)
+- `GMAIL_OAUTH_CLIENT_SECRET` (starts with `GOCSPX-`)
+
+Write them to `~/.config/gmail-oauth/env` if missing, then run the
+setup script.
+
+**Do NOT search Gmail before the setup script has run.**
+
+If the user says "幫我查 gm 信箱" and there's no token yet:
+→ Run the setup script above first, then proceed.
 
 ## Common Operations
 
@@ -104,59 +120,21 @@ python3 ~/gmail_oauth.py status
 Each gm 帳號 only needs to authorize **once**. After that, the token
 auto-refreshes forever (refresh_token). No more browser, no more URL.
 
-The OAuth Client ID/Secret are **NOT stored in the repo** (GitHub secret
-scanning blocks them). They go in `~/.config/gmail-oauth/env`.
-
-### Normal flow (browser and server on the same machine)
-
-1. Run the setup script or `python3 ~/gmail_oauth.py setup`
-2. Browser opens automatically → sign in → click "Allow"
-3. Browser redirects to `http://localhost:8080/?code=...` → "Gmail OAuth complete!"
-4. Done — token saved, auto-refreshes forever
-
-### WSL flow (browser on Windows, server in WSL)
-
-WSL2's localhost forwards to Windows, so `webbrowser.open()` may open the
-URL in Windows Chrome. After clicking "Allow", the browser redirects to
-`http://localhost:8080/?code=...` — if the WSL server already closed, the
-page shows "Cannot locate document" or "404". That's fine.
-
-**The user just copies the full URL from the browser address bar and pastes
-it back to the agent.** The agent runs:
-
-```bash
-python3 ~/gmail_oauth.py import-code 'http://localhost:8080/?code=...'
-```
-
-This is a **one-time** action during setup. After the token is saved, no
-more URL pasting is ever needed.
-
 ### What the user actually does (per gm 帳號, one time)
 
-1. Agent gives them a URL (or browser opens it)
-2. Open in Chrome → sign in to their gm account → click "Allow"
-3. If page loads → done. If page shows error → copy the URL from the
-   address bar and paste it back
-4. **Done forever** — no more browser, no more URL
+1. Agent runs the setup script (or user runs the curl command)
+2. Browser opens → sign in to gm account → click "Allow"
+3. Done — **no more browser, no more URL, no more input**
+4. If browser callback fails (WSL/remote) → paste the callback URL back once
 
-### Agent setup checklist
-
-If the user's PC doesn't have the credentials yet:
+### Quick deploy for a new PC
 
 ```bash
-mkdir -p ~/.config/gmail-oauth
-cat > ~/.config/gmail-oauth/env << 'EOF'
-export GMAIL_OAUTH_CLIENT_ID="<CLIENT_ID>"
-export GMAIL_OAUTH_CLIENT_SECRET="<CLIENT_SECRET>"
-EOF
-chmod 600 ~/.config/gmail-oauth/env
-source ~/.config/gmail-oauth/env
-python3 ~/gmail_oauth.py setup
+curl -sSL https://raw.githubusercontent.com/shein888/cute-hermes/main/gmail-oauth/scripts/setup-gmail-oauth.sh | bash
 ```
 
-If browser callback fails (WSL / remote), tell the user to open the
-printed URL in Chrome, authorize, then paste the callback URL back.
-Run `import-code` with that URL.
+That's it. The script handles everything: downloads the Python script,
+sets up credentials, opens the browser for sign-in.
 
 No App Password. No 2FA requirement. No IMAP/SMTP config.
 
@@ -195,8 +173,10 @@ already exists, it just verifies and exits. If not, it runs the OAuth flow
 
 When the user asks about their Gmail (gm 信箱):
 
-1. Run the setup script (MANDATORY first step)
-2. Check if `~/.config/gmail-oauth/token.json` exists
-3. If YES → just run the gmail_oauth.py commands
-4. If NO → the setup script will open a browser for Google sign-in
-5. If token expired → the script auto-refreshes, no action needed
+1. **Run the setup script** (MANDATORY, idempotent, <1s if token exists)
+2. If token now exists → run the gmail_oauth.py commands
+3. If no token → the setup script opened a browser; user just clicks "Allow"
+4. If token expired → the script auto-refreshes, no action needed
+
+**The Client ID and Secret are in the skill doc above. Write them to
+`~/.config/gmail-oauth/env` if missing. Do NOT ask the user.**
