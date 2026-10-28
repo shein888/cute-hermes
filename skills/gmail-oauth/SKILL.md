@@ -1,7 +1,7 @@
 ---
 name: gmail-oauth
 description: "Read, search, send and reply to Gmail (Google Workspace) mail via the Gmail API with OAuth2. Use when the user mentions 'gm信箱', 'gm 帳號', 'gm account', gm.cute.edu.tw, or asks to read/search/send Gmail. No App Password or 2-Step Verification needed."
-version: 2.0.0
+version: 2.1.0
 author: shein
 platforms: [linux, wsl, windows, macos]
 metadata:
@@ -16,11 +16,16 @@ The team calls this mailbox the **"gm 信箱"**. Any mention of "gm信箱",
 "gm account" or "gm.cute.edu.tw" means this Google Workspace mail — NOT the
 Outlook (cute.edu.tw) mailbox, which is the `outlook-com` skill.
 
-Everything runs through one script that ships with this skill:
+Everything runs through one wrapper that ships with this skill. It finds a
+working Python 3 by itself (Windows Git Bash, WSL, Linux, macOS):
 
 ```bash
-python3 ${HERMES_SKILL_DIR}/scripts/gmail_oauth.py <command> ...
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" <command> ...
 ```
+
+Always keep the path in double quotes exactly as above (on Windows it contains
+backslashes and may contain spaces). Do not call `python3` directly — on
+Windows `python3` is often only a Microsoft Store stub.
 
 The OAuth client (Google Cloud project `hermes-gm`, Internal app) is built
 into the script. **Do not ask the user for a client ID or secret.**
@@ -30,7 +35,7 @@ skill directory, so it survives `hermes skills update`.
 ## Step 1 — check authorization
 
 ```bash
-python3 ${HERMES_SKILL_DIR}/scripts/gmail_oauth.py status
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" status
 ```
 
 - `Refresh token: present` → go to Step 3.
@@ -38,44 +43,52 @@ python3 ${HERMES_SKILL_DIR}/scripts/gmail_oauth.py status
 
 ## Step 2 — authorize (first time only)
 
-Run with a tool timeout of at least 240 seconds:
-
 ```bash
-python3 ${HERMES_SKILL_DIR}/scripts/gmail_oauth.py setup --timeout 180
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" setup
 ```
 
-1. The script opens the browser (on WSL: the Windows default browser) and
-   ALWAYS prints a line starting with `AUTH_URL:`.
-   **Show that full URL to the user right away as a clickable link** and tell
-   them: 「請用 gm 帳號登入並按『允許』」. A browser window may not appear when
-   the agent runs headless or remotely — the link is the reliable path.
-2. When the user clicks Allow, the browser shows 「Gmail 授權完成」 and the
-   command prints `[OK] Authorized`. Continue with Step 3.
-3. If the command exits with code 2 (`No callback received`), the browser was
-   on another machine. Ask the user to copy the full address from the browser
-   bar after clicking Allow (it starts with `http://127.0.0.1:8765/?state=`;
-   the page itself may fail to load) and paste it here, then run:
+This returns within a few seconds. It prints a line starting with `AUTH_URL:`,
+tries to open the browser, and keeps listening in the background for 10 minutes.
+
+1. **Immediately send the user the full AUTH_URL as a clickable link** and say:
+   「請點這個連結，用 gm.cute.edu.tw 帳號登入並按『允許』，完成後跟我說」.
+   Do this even if the output says the browser was opened.
+2. When the user says they are done (or right away), run:
 
    ```bash
-   python3 ${HERMES_SKILL_DIR}/scripts/gmail_oauth.py import-code '<pasted URL>'
+   bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" wait --timeout 120
    ```
 
-   Only the URL from the **latest** `setup` run works.
+   | exit | meaning |
+   |------|---------|
+   | 0 `[OK] Authorized` | Done → Step 3 |
+   | 4 `Still waiting` | User has not clicked Allow yet → ask them, run `wait` again |
+   | 2 `No active login` | Timed out → run `setup` again and send the new link |
+   | 1 `ERROR` | Show the message to the user (e.g. wrong account) |
+
+3. If the browser on the user's side ends on a page that cannot load
+   (`http://127.0.0.1:8765/?state=...&code=...`) — the agent runs on another
+   machine than the browser — ask the user to copy that full address and paste
+   it here, then run:
+
+   ```bash
+   bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" import-code '<pasted URL>'
+   ```
+
+   Only the URL from the **latest** `setup` works.
 
 Never use `urn:ietf:wg:oauth:2.0:oob` — Google has disabled that flow.
 
 ## Step 3 — do what the user asked
 
 ```bash
-G="python3 ${HERMES_SKILL_DIR}/scripts/gmail_oauth.py"
-
-$G list                 # newest 10 in Inbox
-$G list 30
-$G search "from:prac@cute.edu.tw after:2026-10-01"
-$G search "subject:課程大綱 is:unread" 20
-$G read MESSAGE_ID      # headers, attachment names, plain-text body
-$G send "someone@cute.edu.tw" "Subject" "Body text"
-$G reply "someone@cute.edu.tw" THREAD_ID "Reply body"
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" list                 # newest 10 in Inbox
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" list 30
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" search "from:prac@cute.edu.tw after:2026-10-01"
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" search "subject:課程大綱 is:unread" 20
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" read MESSAGE_ID      # headers, attachments, text body
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" send "someone@cute.edu.tw" "Subject" "Body text"
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" reply "someone@cute.edu.tw" THREAD_ID "Reply body"
 ```
 
 `list` / `search` print `ID`, `THREAD`, date, sender and subject
@@ -105,5 +118,6 @@ before running `send` or `reply`.**
 | `Error 400: invalid_request` on Google's page | Old script version — run `hermes skills update gmail-oauth` |
 | `access_denied` / `org_internal` | The user signed in with a non-gm.cute.edu.tw account → sign in with the gm account |
 | `Gmail API error 403 ... has not been used / disabled` | Gmail API disabled in project hermes-gm → tell the IT admin |
+| `Python 3 not found` | Install Python once (`winget install Python.Python.3.12`), then retry |
 
 The access token expires every hour and is refreshed automatically.

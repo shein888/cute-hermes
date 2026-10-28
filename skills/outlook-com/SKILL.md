@@ -1,7 +1,7 @@
 ---
 name: outlook-com
 description: "Search and read the user's Outlook (classic Outlook desktop, cute.edu.tw) mail via PowerShell COM/MAPI. Use when the user asks to read, search or summarize Outlook mail, or mentions Outlook / 學校信箱 cute.edu.tw. Works from WSL or Windows. For gm.cute.edu.tw (gm 信箱) use the gmail-oauth skill instead."
-version: 4.0.0
+version: 4.1.0
 author: shein
 platforms: [windows, wsl]
 metadata:
@@ -15,14 +15,17 @@ metadata:
 Searches the already-signed-in **classic Outlook** profile through COM. No
 password needed. The scripts ship with this skill — nothing to download.
 
-| Agent runs in | Command |
-|---------------|---------|
-| WSL (normal case) | `bash ${HERMES_SKILL_DIR}/scripts/outlook-search.sh <args>` |
-| Windows (cmd / PowerShell) | `cmd /c "${HERMES_SKILL_DIR}\scripts\outlook-search.cmd" <args>` |
+One command for every setup — Hermes Desktop / Hermes for Windows (Git Bash)
+and Hermes in WSL:
 
-The WSL wrapper copies `outlook-search.ps1` to `%USERPROFILE%\.cute-hermes\`,
-runs it with Windows PowerShell and prints the result (UTF-8). The result is
-also saved to `%USERPROFILE%\search-result.txt`.
+```bash
+bash "${HERMES_SKILL_DIR}/scripts/outlook-search.sh" <args>
+```
+
+Keep the path in double quotes exactly as above (on Windows it contains
+backslashes and may contain spaces). The wrapper runs `outlook-search.ps1`
+with Windows PowerShell and prints the result (UTF-8); it is also saved to
+`%USERPROFILE%\search-result.txt`.
 
 **Rules**
 - Never hard-code a Windows username or path such as `C:\Users\<name>`.
@@ -43,13 +46,12 @@ also saved to `%USERPROFILE%\search-result.txt`.
 | `-Diagnose` | Check this PC instead of searching |
 
 ```bash
-O="bash ${HERMES_SKILL_DIR}/scripts/outlook-search.sh"
-$O -Days 1
-$O -Keyword "114-2"
-$O -Sender "prac" -Date "2026-10-16"
-$O -Keyword "法規" -Days 3
-$O -Folder "02-圖資中心" -Days 1
-$O -Keyword "test" -Recursive
+bash "${HERMES_SKILL_DIR}/scripts/outlook-search.sh" -Days 1
+bash "${HERMES_SKILL_DIR}/scripts/outlook-search.sh" -Keyword "114-2"
+bash "${HERMES_SKILL_DIR}/scripts/outlook-search.sh" -Sender "prac" -Date "2026-10-16"
+bash "${HERMES_SKILL_DIR}/scripts/outlook-search.sh" -Keyword "法規" -Days 3
+bash "${HERMES_SKILL_DIR}/scripts/outlook-search.sh" -Folder "02-圖資中心" -Days 1
+bash "${HERMES_SKILL_DIR}/scripts/outlook-search.sh" -Keyword "test" -Recursive
 ```
 
 Without `-Recursive` the search covers the Inbox and its direct sub-folders.
@@ -67,7 +69,7 @@ problem (the reason is printed).
 ## When it fails on a PC → run the diagnose
 
 ```bash
-bash ${HERMES_SKILL_DIR}/scripts/outlook-search.sh -Diagnose
+bash "${HERMES_SKILL_DIR}/scripts/outlook-search.sh" -Diagnose
 ```
 
 Explain the cause to the user in plain words:
@@ -80,6 +82,7 @@ Explain the cause to the user in plain words:
 | `AntivirusRegistered: NONE` or `ObjectModelGuardPolicy` not default; search hangs | Outlook shows a hidden "A program is trying to access e-mail address information" prompt. Fix the antivirus status (File > Options > Trust Center > Programmatic Access) or ask IT to allow programmatic access by GPO. |
 | `ExecutionPolicy: MachinePolicy=AllSigned` / `Restricted` | Group Policy blocks scripts; `-ExecutionPolicy Bypass` cannot override it. Ask IT. |
 | `powershell.exe not reachable` | WSL interop is off (`/etc/wsl.conf`). |
+| `Outlook COM needs Windows` | Hermes runs on Linux/macOS or a remote gateway — Outlook COM only works on the Windows PC that has Outlook. |
 | Outlook asks which profile to use | Control Panel > Mail > Show Profiles > "Always use this profile". |
 
 ## Item classes (for custom PowerShell)

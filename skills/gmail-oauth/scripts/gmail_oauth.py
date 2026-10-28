@@ -6,8 +6,9 @@ Loopback redirect (http://127.0.0.1:<port>) + PKCE, compatible with
 Google's "Desktop app" OAuth client. No OOB flow.
 
 Usage:
-  python3 gmail_oauth.py setup [--timeout SEC] [--no-browser]
-                                         # Open consent page and wait for callback
+  python3 gmail_oauth.py setup [--timeout SEC] [--no-browser] [--foreground]
+                                         # Print AUTH_URL, open browser, listen in background
+  python3 gmail_oauth.py wait [--timeout SEC]   # Wait until the user clicked Allow
   python3 gmail_oauth.py auth-url        # Print consent URL only (no waiting)
   python3 gmail_oauth.py import-code URL # Exchange a pasted callback URL
   python3 gmail_oauth.py status          # Check token status
@@ -43,6 +44,13 @@ from email import message_from_bytes, policy
 from email.message import EmailMessage
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+
+# Windows consoles default to cp950/cp1252; never crash on Chinese output.
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 # ─── Config ───────────────────────────────────────────────────────────────
 CONF_DIR = Path.home() / ".config" / "gmail-oauth"
@@ -152,7 +160,7 @@ def refresh_token(token):
     except RuntimeError as e:
         if "invalid_grant" in str(e):
             _die("Refresh token was revoked or expired (invalid_grant).\n"
-                 "Re-authorize: python3 gmail_oauth.py setup")
+                 "Re-authorize with the setup command")
         raise
     token.update(result)  # keeps refresh_token if Google does not send a new one
     token["expires_at"] = time.time() + result.get("expires_in", 3600)
@@ -163,10 +171,10 @@ def refresh_token(token):
 def get_access_token():
     token = load_token()
     if not token or "access_token" not in token:
-        _die("NO_TOKEN: Gmail is not authorized yet. Run: python3 gmail_oauth.py setup")
+        _die("NO_TOKEN: Gmail is not authorized yet. Run the skill's setup command")
     if time.time() > token.get("expires_at", 0) - 60:
         if not token.get("refresh_token"):
-            _die("Token expired and no refresh token. Re-run: python3 gmail_oauth.py setup")
+            _die("Token expired and no refresh token. Re-run the setup command")
         token = refresh_token(token)
     return token["access_token"]
 
@@ -269,24 +277,43 @@ def _exchange_code(code, pending):
                                     else "MISSING — revoke app access and run setup again"))
 
 
+LISTENER_FILE = CONF_DIR / "listener.json"
+LISTENER_LOG = CONF_DIR / "listener.log"
+
+
 def _bind_server(preferred_port, handler):
     for port in (preferred_port, 0):
         try:
             return http.server.HTTPServer(("127.0.0.1", port), handler)
         except OSError:
             continue
-    _die("Could not open a local port for the OAuth callback.")
+    return None
 
 
-def oauth_setup(timeout=300, no_browser=False):
+def _set_listener(**fields):
+    data = {}
+    if LISTENER_FILE.exists():
+        try:
+            data = json.loads(LISTENER_FILE.read_text())
+        except ValueError:
+            data = {}
+    data.update(fields, updated_at=time.time())
+    _write_private(LISTENER_FILE, data)
+
+
+def _listen(timeout, no_browser=False, announce=True):
+    """Bind the loopback port, create the pending login, wait for Google's redirect.
+    Writes progress to listener.json so `setup` / `wait` in other processes can follow it.
+    Returns 0 on success, 1 on OAuth error, 2 on timeout."""
     _require_client()
     captured = {}
+    state_box = {}
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             if "code" in q or "error" in q:
-                if q.get("state", [""])[0] != pending["state"]:
+                if q.get("state", [""])[0] != state_box.get("state"):
                     self._reply(400, "State mismatch — please run setup again.")
                     return
                 if "code" in q:
@@ -310,53 +337,141 @@ def oauth_setup(timeout=300, no_browser=False):
             pass
 
     server = _bind_server(DEFAULT_PORT, Handler)
+    if server is None:
+        _set_listener(status="error", message="Could not open a local port for the OAuth callback.")
+        _die("Could not open a local port for the OAuth callback.")
     port = server.server_address[1]
     pending = _new_pending(port)
+    state_box["state"] = pending["state"]
     url = _auth_url(pending)
-
-    # Always print the URL so the agent can relay it to the user.
-    print("AUTH_URL: " + url, flush=True)
-    opened = False if no_browser else open_browser(url)
-    print(("[..] Browser opened. " if opened else "[!!] Could not open a browser automatically. ")
-          + "Sign in with your gm account and click Allow.", flush=True)
-    print(f"[..] Waiting for callback on {pending['redirect_uri']} (timeout {timeout}s)...", flush=True)
-
     deadline = time.time() + timeout
+    _set_listener(status="listening", pid=os.getpid(), port=port, auth_url=url,
+                  state=pending["state"], deadline=deadline, message="")
+    if announce:
+        print("AUTH_URL: " + url, flush=True)
+        opened = False if no_browser else open_browser(url)
+        print(("[..] Browser opened. " if opened else "[!!] Could not open a browser automatically. ")
+              + "Sign in with your gm account and click Allow.", flush=True)
+        print(f"[..] Waiting for callback on {pending['redirect_uri']} (timeout {timeout}s)...", flush=True)
+
     server.timeout = 1
     while not captured and time.time() < deadline:
         server.handle_request()
     server.server_close()
 
     if "code" in captured:
-        _exchange_code(captured["code"], pending)
-        return
-    if "error" in captured:
-        _die(f"OAuth error: {captured['error']}")
-
-    print("\n[!!] No callback received.", file=sys.stderr)
-    print("If the browser ended on a page that could not load (http://127.0.0.1:...?code=...),\n"
-          "copy that full address and run:\n"
-          "  python3 gmail_oauth.py import-code '<pasted URL>'\n"
-          "The pending login stays valid for about 10 minutes.", file=sys.stderr)
-    if sys.stdin.isatty():
         try:
-            pasted = input("Or paste the callback URL here (Enter to skip): ").strip()
-        except EOFError:
-            pasted = ""
-        if pasted:
-            import_code(pasted)
-            return
-    sys.exit(2)
+            _exchange_code(captured["code"], pending)
+        except RuntimeError as e:
+            _set_listener(status="error", message=str(e))
+            print(f"ERROR: {e}", file=sys.stderr)
+            return 1
+        _set_listener(status="done", message="Authorized")
+        return 0
+    if "error" in captured:
+        _set_listener(status="error", message=f"OAuth error: {captured['error']}")
+        print(f"OAuth error: {captured['error']}", file=sys.stderr)
+        return 1
+    _set_listener(status="timeout", message="No callback received")
+    return 2
+
+
+def oauth_setup(timeout=600, no_browser=False, foreground=False):
+    """Default: start a background listener, print AUTH_URL and return at once, so an agent
+    whose tool only shows output after the command ends can hand the link to the user.
+    Then `wait` reports the result. --foreground keeps everything in this process."""
+    _require_client()
+    if foreground:
+        rc = _listen(timeout, no_browser=no_browser, announce=True)
+        if rc == 2:
+            print("\n[!!] No callback received.", file=sys.stderr)
+            print("If the browser ended on a page that could not load (http://127.0.0.1:...?code=...),\n"
+                  "copy that full address and run:  import-code '<pasted URL>'", file=sys.stderr)
+            if sys.stdin.isatty():
+                try:
+                    pasted = input("Or paste the callback URL here (Enter to skip): ").strip()
+                except EOFError:
+                    pasted = ""
+                if pasted:
+                    import_code(pasted)
+                    return
+        sys.exit(rc)
+
+    try:
+        LISTENER_FILE.unlink()
+    except OSError:
+        pass
+    CONF_DIR.mkdir(parents=True, exist_ok=True)
+    cmd = [sys.executable, os.path.abspath(__file__), "_listen", "--timeout", str(timeout)]
+    kwargs = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+    with open(LISTENER_LOG, "w", encoding="utf-8") as log:
+        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=log, stderr=log, close_fds=True, **kwargs)
+
+    info = {}
+    for _ in range(100):  # up to ~10 s for the listener to bind its port
+        time.sleep(0.1)
+        if LISTENER_FILE.exists():
+            try:
+                info = json.loads(LISTENER_FILE.read_text())
+            except ValueError:
+                continue
+            if info.get("status") in ("listening", "error"):
+                break
+    if info.get("status") != "listening":
+        log_tail = LISTENER_LOG.read_text(encoding="utf-8", errors="replace")[-800:] if LISTENER_LOG.exists() else ""
+        _die("ERROR: background listener did not start. " + (info.get("message") or "") + "\n" + log_tail
+             + "\nRetry with: setup --foreground")
+
+    url = info["auth_url"]
+    print("AUTH_URL: " + url, flush=True)
+    opened = False if no_browser else open_browser(url)
+    print(("[..] Browser opened. " if opened else "[!!] No browser opened automatically. ")
+          + "Give the AUTH_URL link to the user: sign in with the gm account and click Allow.")
+    print(f"[..] Listening on http://127.0.0.1:{info['port']} for {timeout}s in the background.")
+    print("[..] After the user clicks Allow, run:  wait")
+
+
+def wait_for_auth(timeout=120):
+    """Poll the background listener started by `setup`."""
+    deadline = time.time() + timeout
+    while True:
+        info = {}
+        if LISTENER_FILE.exists():
+            try:
+                info = json.loads(LISTENER_FILE.read_text())
+            except ValueError:
+                info = {}
+        status = info.get("status")
+        if status == "done":
+            print("[OK] Authorized. Refresh token: "
+                  + ("present" if (load_token() or {}).get("refresh_token") else "MISSING"))
+            return 0
+        if status == "error":
+            print(f"ERROR: {info.get('message')}", file=sys.stderr)
+            return 1
+        if status == "timeout" or status is None:
+            print("No active login (timed out or never started). Run setup again.", file=sys.stderr)
+            return 2
+        if time.time() >= deadline:
+            print("Still waiting for the user to click Allow. Ask the user, then run `wait` again.\n"
+                  "If the browser shows a page that cannot load, ask for that full address and run:"
+                  "  import-code '<URL>'")
+            return 4
+        time.sleep(1)
 
 
 def print_auth_url():
-    """Create a pending login and print the consent URL without waiting."""
+    """Create a pending login and print the consent URL without listening (manual import-code path)."""
     _require_client()
     pending = _new_pending(DEFAULT_PORT)
     url = _auth_url(pending)
     print("AUTH_URL: " + url)
     print("After clicking Allow the browser will show a page that cannot load.\n"
-          "Copy its full address and run: python3 gmail_oauth.py import-code '<URL>'")
+          "Copy its full address and run:  import-code '<URL>'")
 
 
 def import_code(callback_url):
@@ -372,6 +487,8 @@ def import_code(callback_url):
     if q.get("state", [""])[0] != pending["state"]:
         _die("State mismatch — this URL belongs to a different login attempt. Run setup again.")
     _exchange_code(q["code"][0], pending)
+    if LISTENER_FILE.exists():
+        _set_listener(status="done", message="Authorized via import-code")
 
 
 # ─── Gmail API ────────────────────────────────────────────────────────────
@@ -510,7 +627,7 @@ def cmd_reply(to, thread_id, body):
 def cmd_status():
     token = load_token()
     if not token:
-        print("No token. Run: python3 gmail_oauth.py setup")
+        print("No token. Run the skill's setup command")
         return
     print(f"Token file: {TOKEN_FILE}")
     remaining = int(token.get("expires_at", 0) - time.time())
@@ -531,11 +648,16 @@ def main():
         if len(rest) < n:
             _die("Usage: gmail_oauth.py " + usage)
 
+    def opt(name, default):
+        return int(rest[rest.index(name) + 1]) if name in rest else default
+
     if cmd == "setup":
-        timeout = 300
-        if "--timeout" in rest:
-            timeout = int(rest[rest.index("--timeout") + 1])
-        oauth_setup(timeout=timeout, no_browser="--no-browser" in rest)
+        oauth_setup(timeout=opt("--timeout", 600), no_browser="--no-browser" in rest,
+                    foreground="--foreground" in rest)
+    elif cmd == "_listen":
+        sys.exit(_listen(opt("--timeout", 600), no_browser=True, announce=False))
+    elif cmd == "wait":
+        sys.exit(wait_for_auth(opt("--timeout", 120)))
     elif cmd == "auth-url":
         print_auth_url()
     elif cmd == "import-code":

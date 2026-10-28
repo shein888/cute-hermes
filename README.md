@@ -9,22 +9,45 @@ Hermes Agent skills for the CUTE (中國科技大學, China University of Techno
 
 ## Install (each PC, once)
 
+Install from a terminal or the Desktop app — **not by asking the agent in chat**
+(`hermes skills install` asks for confirmation, and a chat cannot answer it).
+
+### Hermes Desktop (Windows) — easiest
+
+Open these two links on the PC (Win+R, paste, Enter) and click **Install** in Hermes:
+
+```
+hermes://skill/install?identifier=shein888%2Fcute-hermes%2Fskills%2Foutlook-com
+hermes://skill/install?identifier=shein888%2Fcute-hermes%2Fskills%2Fgmail-oauth
+```
+
+(Needs a recent Desktop build. If the link does nothing, use the commands below.)
+
+### Terminal (PowerShell on Windows, or WSL / Linux shell)
+
 ```bash
 hermes skills tap add shein888/cute-hermes
-hermes skills install shein888/cute-hermes/skills/outlook-com
-hermes skills install shein888/cute-hermes/skills/gmail-oauth
+hermes skills install shein888/cute-hermes/skills/outlook-com --yes
+hermes skills install shein888/cute-hermes/skills/gmail-oauth --yes
+hermes skills list
 ```
 
 - Use `owner/repo` (`shein888/cute-hermes`) for `tap add`, **not** the full
   `https://github.com/...` URL — Hermes stores the text as-is and the URL form
   finds nothing. If you already added the URL form, remove it:
   `hermes skills tap remove https://github.com/shein888/cute-hermes`
-- `tap add` only registers this repo as a source (`hermes skills search outlook`
-  will then list the skills); `install` is what copies them to `~/.hermes/skills/`.
-- Scripts are installed together with each skill. Nothing is downloaded with curl.
+- `tap add` only registers this repo as a source; `install` copies the skill
+  (with its scripts) into the Hermes skills folder
+  (`%LOCALAPPDATA%\hermes\skills` on Windows, `~/.hermes/skills` on WSL/Linux).
+- Start a **new chat** afterwards, then ask: 「幫我查 Outlook 最近三天的信」
+  or 「幫我看 gm 信箱有沒有新信」. The first gm request gives a Google sign-in link once per PC.
 
-Then just ask Hermes: 「幫我查 Outlook 最近三天的信」 or 「幫我看 gm 信箱有沒有新信」.
-The first gm request opens a Google sign-in page once per PC.
+### Requirements on the PC
+
+- outlook-com: Windows with **classic** Outlook (not "New Outlook"). Works with
+  Hermes for Windows/Desktop (Git Bash) and Hermes in WSL.
+- gmail-oauth: Python 3.8+ (`python`, `py -3`, or Hermes' bundled `uv` is used
+  automatically; otherwise `winget install Python.Python.3.12`).
 
 ## Update (after this repo changes)
 
@@ -53,11 +76,13 @@ cute-hermes/
     └── gmail-oauth/
         ├── SKILL.md
         └── scripts/
+            ├── gmail.sh             # finds a working Python, runs gmail_oauth.py
             └── gmail_oauth.py
 ```
 
 Rules for editing:
-- Reference scripts in SKILL.md as `${HERMES_SKILL_DIR}/scripts/...`.
+- Reference scripts in SKILL.md as `bash "${HERMES_SKILL_DIR}/scripts/..."` — always
+  in double quotes: on Windows the path has backslashes and may contain spaces.
 - Do **not** put `curl ... | bash` (or any remote download-and-run) in SKILL.md or
   scripts: the Hermes install scanner rates it critical and blocks the install,
   even with `--force`.
