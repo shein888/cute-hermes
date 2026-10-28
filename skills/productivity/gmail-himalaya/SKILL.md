@@ -47,9 +47,10 @@ If the user gives you their regular account password, explain:
 
 > Google Workspace 帳號要 **App 密碼**（不是帳號密碼）才能用 IMAP。
 > 你需要去產生一個：
-> 1. 開啟 https://myaccount.google.com/apppasswords
-> 2. 選「Mail」→ 產生
-> 3. 會得到一個 16 位密碼，例如 `abcd efgh ijkl mnop`
+> 1. 先用瀏覽器登入你的 gm 帳號
+> 2. 再進入 https://myaccount.google.com/apppasswords
+> 3. 選「Mail」→ 產生
+> 4. 會得到一個 16 位密碼，例如 `abcd efgh ijkl mnop`
 >
 > 給我那個 App 密碼就行。
 
