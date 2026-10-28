@@ -209,10 +209,12 @@ already exists, it just verifies and exits. If not, it runs the OAuth flow
 
 When the user asks about their Gmail (gm 信箱):
 
-1. **Run the setup script** (MANDATORY, idempotent, <1s if token exists)
-2. If token now exists → run the gmail_oauth.py commands
-3. If no token → the setup script opened a browser; user just clicks "Allow"
-4. If token expired → the script auto-refreshes, no action needed
+1. If `~/.config/gmail-oauth/token.json` exists → skip to step 4
+2. If not → do Steps 1-3 from "Before You Do Anything" above:
+   - Download the script
+   - Write credentials to `~/.config/gmail-oauth/env`
+   - Run `python3 ~/gmail_oauth.py setup` (opens browser)
+3. User signs in + clicks "Allow" in the browser (that's their ONLY action)
+4. Run the gmail_oauth.py command (list, search, read, send)
 
-**The Client ID and Secret are in the skill doc above. Write them to
-`~/.config/gmail-oauth/env` if missing. Do NOT ask the user.**
+**The user never types commands. The agent does everything.**
