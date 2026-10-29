@@ -18,6 +18,16 @@ Usage:
   python3 gmail_oauth.py read MESSAGE_ID
   python3 gmail_oauth.py send TO SUBJECT BODY
   python3 gmail_oauth.py reply TO THREAD_ID BODY
+  python3 gmail_oauth.py drive-list [N] [FOLDER_ID]
+  python3 gmail_oauth.py drive-search QUERY [N]
+  python3 gmail_oauth.py drive-info FILE_ID
+  python3 gmail_oauth.py drive-read FILE_ID          # Google Docs/Sheets/Slides, text files
+  python3 gmail_oauth.py drive-download FILE_ID [DEST]
+  python3 gmail_oauth.py drive-upload LOCAL_FILE [FOLDER_ID]
+  python3 gmail_oauth.py drive-mkdir NAME [PARENT_ID]
+  python3 gmail_oauth.py drive-rename FILE_ID NEW_NAME
+  python3 gmail_oauth.py drive-move FILE_ID FOLDER_ID
+  python3 gmail_oauth.py drive-trash FILE_ID        # to trash (recoverable), never permanent
 
 Environment:
   GMAIL_OAUTH_CLIENT_ID / GMAIL_OAUTH_CLIENT_SECRET  optional override
@@ -59,10 +69,14 @@ TOKEN_FILE = CONF_DIR / "token.json"
 PENDING_FILE = CONF_DIR / "pending.json"
 ENV_FILE = CONF_DIR / "env"
 
-SCOPES = "https://www.googleapis.com/auth/gmail.modify"
+GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
+DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
+SCOPES = f"{GMAIL_SCOPE} {DRIVE_SCOPE}"
 AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_ENDPOINT = os.environ.get("GMAIL_OAUTH_TOKEN_ENDPOINT", "https://oauth2.googleapis.com/token")
 API_BASE = os.environ.get("GMAIL_OAUTH_API_BASE", "https://gmail.googleapis.com/gmail/v1/users/me")
+DRIVE_BASE = os.environ.get("GMAIL_OAUTH_DRIVE_BASE", "https://www.googleapis.com/drive/v3")
+DRIVE_UPLOAD = os.environ.get("GMAIL_OAUTH_DRIVE_UPLOAD", "https://www.googleapis.com/upload/drive/v3")
 DEFAULT_PORT = int(os.environ.get("GMAIL_OAUTH_PORT", "8765"))
 HOSTED_DOMAIN = "gm.cute.edu.tw"  # hint only; Internal app already restricts to the org
 
@@ -659,7 +673,261 @@ def cmd_status():
     remaining = int(token.get("expires_at", 0) - time.time())
     print("Access token: " + (f"valid for {remaining}s" if remaining > 0 else "expired (auto-refreshes on next call)"))
     print("Refresh token: " + ("present (auto-refresh works)" if token.get("refresh_token") else "MISSING"))
-    print(f"Scope: {token.get('scope', '?')}")
+    scope = token.get("scope", "")
+    print(f"Scope: {scope or '?'}")
+    print("Gmail: " + ("yes" if "gmail" in scope else "unknown"))
+    print("Drive: " + ("yes" if "auth/drive" in scope else "NO — run logout, then setup, to add Drive"))
+
+
+# ─── Google Drive API ─────────────────────────────────────────────────────
+FOLDER_MIME = "application/vnd.google-apps.folder"
+# Google-native files have no bytes; they are exported. read -> text, download -> Office file.
+EXPORT_TEXT = {
+    "application/vnd.google-apps.document": ("text/plain", ".txt"),
+    "application/vnd.google-apps.spreadsheet": ("text/csv", ".csv"),
+    "application/vnd.google-apps.presentation": ("text/plain", ".txt"),
+}
+EXPORT_FILE = {
+    "application/vnd.google-apps.document":
+        ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx"),
+    "application/vnd.google-apps.spreadsheet":
+        ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx"),
+    "application/vnd.google-apps.presentation":
+        ("application/vnd.openxmlformats-officedocument.presentationml.presentation", ".pptx"),
+    "application/vnd.google-apps.drawing": ("image/png", ".png"),
+}
+FILE_FIELDS = "id,name,mimeType,size,modifiedTime,parents,webViewLink,owners(displayName,emailAddress),trashed"
+_ALL_DRIVES = {"supportsAllDrives": "true"}
+
+
+def _require_drive_scope():
+    token = load_token()
+    if token and token.get("scope") and "auth/drive" not in token["scope"]:
+        _die("DRIVE_SCOPE_MISSING: this PC authorized Gmail only (older version).\n"
+             "Re-authorize once: run the skill's `logout`, then `setup`, and let the user click Allow again.")
+
+
+def _drive(method, path, params=None, body=None, data=None, content_type=None, base=None, raw=False):
+    _require_drive_scope()
+    url = f"{base or DRIVE_BASE}/{path}"
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    headers = {"Authorization": f"Bearer {get_access_token()}"}
+    if body is not None:
+        data = json.dumps(body).encode()
+        content_type = "application/json; charset=UTF-8"
+    if content_type:
+        headers["Content-Type"] = content_type
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            payload = resp.read()
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode(errors="replace")[:500]
+        if e.code == 403 and ("insufficient" in detail.lower() or "scope" in detail.lower()):
+            _die("DRIVE_SCOPE_MISSING: token has no Drive permission. Run `logout`, then `setup`.")
+        if e.code == 403 and ("accessNotConfigured" in detail or "has not been used" in detail):
+            _die("Google Drive API is not enabled in project hermes-gm — tell the IT admin.")
+        if e.code == 404:
+            _die(f"Not found (or no access): {path}")
+        _die(f"Drive API error {e.code}: {detail}")
+    if raw:
+        return payload
+    return json.loads(payload or b"{}")
+
+
+def _fmt_size(n):
+    if n in (None, ""):
+        return "-"
+    n = float(n)
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f}{unit}" if unit == "B" else f"{n:.1f}{unit}"
+        n /= 1024
+
+
+def _kind(mime):
+    if mime == FOLDER_MIME:
+        return "folder"
+    if mime.startswith("application/vnd.google-apps."):
+        return "g-" + mime.rsplit(".", 1)[-1]
+    return mime.split("/")[-1][:12]
+
+
+def _print_files(files):
+    if not files:
+        print("No files.")
+        return
+    print(f"{'ID':<34}  {'MODIFIED':<16}  {'TYPE':<14}  {'SIZE':>8}  NAME")
+    print("─" * 110)
+    for f in files:
+        mod = (f.get("modifiedTime") or "")[:16].replace("T", " ")
+        print(f"{f['id']:<34}  {mod:<16}  {_kind(f.get('mimeType', '')):<14}  "
+              f"{_fmt_size(f.get('size')):>8}  {f.get('name', '')}")
+
+
+def _q_escape(text):
+    return text.replace("\\", "\\\\").replace("'", "\\'")
+
+
+def _list_files(q, limit, order="modifiedTime desc"):
+    files, token = [], None
+    while len(files) < limit:
+        params = {"q": q, "pageSize": min(100, limit - len(files)), "orderBy": order,
+                  "fields": f"nextPageToken,files({FILE_FIELDS})",
+                  "includeItemsFromAllDrives": "true", "corpora": "allDrives", **_ALL_DRIVES}
+        if token:
+            params["pageToken"] = token
+        result = _drive("GET", "files", params)
+        files += result.get("files", [])
+        token = result.get("nextPageToken")
+        if not token:
+            break
+    return files[:limit]
+
+
+def cmd_drive_list(limit=20, folder_id=None):
+    q = "trashed = false"
+    if folder_id:
+        q += f" and '{_q_escape(folder_id)}' in parents"
+    files = _list_files(q, limit, order="folder,modifiedTime desc" if folder_id else "modifiedTime desc")
+    _print_files(files)
+
+
+def cmd_drive_search(query, limit=20):
+    # Raw Drive query syntax passes through; plain words search names and contents.
+    if any(op in query for op in (" contains ", " = ", " in ", " != ", " < ", " > ", "mimeType")):
+        q = query
+    else:
+        e = _q_escape(query)
+        q = f"(name contains '{e}' or fullText contains '{e}')"
+    if "trashed" not in q:
+        q += " and trashed = false"
+    try:
+        files = _list_files(q, limit, order="modifiedTime desc")
+    except SystemExit:
+        raise
+    _print_files(files)
+
+
+def _meta(file_id):
+    return _drive("GET", f"files/{urllib.parse.quote(file_id)}", {"fields": FILE_FIELDS, **_ALL_DRIVES})
+
+
+def cmd_drive_info(file_id):
+    f = _meta(file_id)
+    for k in ("id", "name", "mimeType", "modifiedTime", "webViewLink"):
+        print(f"{k}: {f.get(k, '')}")
+    print(f"size: {_fmt_size(f.get('size'))}")
+    print("owners: " + ", ".join(f"{o.get('displayName')} <{o.get('emailAddress')}>" for o in f.get("owners", [])))
+    print(f"parents: {', '.join(f.get('parents', []))}")
+    if f.get("trashed"):
+        print("trashed: yes")
+
+
+def _file_bytes(f, export_map):
+    fid = urllib.parse.quote(f["id"])
+    mime = f.get("mimeType", "")
+    if mime in export_map:
+        target, ext = export_map[mime]
+        return _drive("GET", f"files/{fid}/export", {"mimeType": target}, raw=True), ext
+    if mime.startswith("application/vnd.google-apps."):
+        _die(f"Cannot download Google {_kind(mime)} files (form/site/shortcut).")
+    return _drive("GET", f"files/{fid}", {"alt": "media", **_ALL_DRIVES}, raw=True), ""
+
+
+def cmd_drive_read(file_id, max_chars=10000):
+    f = _meta(file_id)
+    mime = f.get("mimeType", "")
+    if mime == FOLDER_MIME:
+        print("This is a folder — use drive-list FOLDER_ID")
+        return
+    readable = mime in EXPORT_TEXT or mime.startswith("text/") or mime in (
+        "application/json", "application/xml", "application/javascript", "application/x-yaml")
+    if not readable:
+        print(f"{f['name']} is {mime}; not plain text. Use drive-download to save it, then open the file.")
+        return
+    data, _ = _file_bytes(f, EXPORT_TEXT)
+    text = data.decode("utf-8-sig", errors="replace")
+    print(f"# {f['name']}  ({mime})")
+    print(text[:max_chars])
+    if len(text) > max_chars:
+        print(f"\n... ({len(text) - max_chars} more chars)")
+
+
+def _safe_name(name):
+    return re.sub(r'[\\/:*?"<>|\r\n]+', "_", name).strip() or "file"
+
+
+def cmd_drive_download(file_id, dest=None):
+    f = _meta(file_id)
+    if f.get("mimeType") == FOLDER_MIME:
+        _die("This is a folder — download files one by one (drive-list FOLDER_ID).")
+    data, ext = _file_bytes(f, EXPORT_FILE)
+    dest_path = Path(dest).expanduser() if dest else Path.home() / "Downloads"
+    if dest_path.is_dir() or not dest_path.suffix:
+        dest_path.mkdir(parents=True, exist_ok=True)
+        name = _safe_name(f["name"])
+        if ext and not name.lower().endswith(ext):
+            name += ext
+        dest_path = dest_path / name
+    else:
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+    stem, suffix, n = dest_path.stem, dest_path.suffix, 1
+    while dest_path.exists():
+        dest_path = dest_path.with_name(f"{stem} ({n}){suffix}")
+        n += 1
+    dest_path.write_bytes(data)
+    print(f"[OK] Saved {len(data)} bytes to {dest_path}")
+
+
+def cmd_drive_upload(local_path, folder_id=None, name=None):
+    path = Path(local_path).expanduser()
+    if not path.is_file():
+        _die(f"File not found: {path}")
+    import mimetypes
+    mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    meta = {"name": name or path.name}
+    if folder_id:
+        meta["parents"] = [folder_id]
+    boundary = "cute_hermes_" + secrets.token_hex(8)
+    body = (f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n"
+            f"{json.dumps(meta, ensure_ascii=False)}\r\n--{boundary}\r\nContent-Type: {mime}\r\n\r\n").encode()
+    body += path.read_bytes() + f"\r\n--{boundary}--\r\n".encode()
+    f = _drive("POST", "files", {"uploadType": "multipart", "fields": FILE_FIELDS, **_ALL_DRIVES},
+               data=body, content_type=f"multipart/related; boundary={boundary}", base=DRIVE_UPLOAD)
+    print(f"[OK] Uploaded {f.get('name')}  id={f.get('id')}")
+    if f.get("webViewLink"):
+        print(f"     {f['webViewLink']}")
+
+
+def cmd_drive_mkdir(name, parent_id=None):
+    meta = {"name": name, "mimeType": FOLDER_MIME}
+    if parent_id:
+        meta["parents"] = [parent_id]
+    f = _drive("POST", "files", {"fields": FILE_FIELDS, **_ALL_DRIVES}, body=meta)
+    print(f"[OK] Folder created: {f.get('name')}  id={f.get('id')}")
+
+
+def cmd_drive_rename(file_id, new_name):
+    f = _drive("PATCH", f"files/{urllib.parse.quote(file_id)}", {"fields": FILE_FIELDS, **_ALL_DRIVES},
+               body={"name": new_name})
+    print(f"[OK] Renamed to {f.get('name')}")
+
+
+def cmd_drive_move(file_id, folder_id):
+    old = _meta(file_id).get("parents", [])
+    params = {"addParents": folder_id, "fields": FILE_FIELDS, **_ALL_DRIVES}
+    if old:
+        params["removeParents"] = ",".join(old)
+    f = _drive("PATCH", f"files/{urllib.parse.quote(file_id)}", params, body={})
+    print(f"[OK] Moved {f.get('name')} to folder {folder_id}")
+
+
+def cmd_drive_trash(file_id):
+    f = _drive("PATCH", f"files/{urllib.parse.quote(file_id)}", {"fields": FILE_FIELDS, **_ALL_DRIVES},
+               body={"trashed": True})
+    print(f"[OK] Moved to trash: {f.get('name')} (recoverable from Drive trash for 30 days)")
 
 
 # ─── Main ────────────────────────────────────────────────────────────────
@@ -691,6 +959,36 @@ def main():
         import_code(rest[0])
     elif cmd == "status":
         cmd_status()
+    elif cmd == "drive-list":
+        cmd_drive_list(int(rest[0]) if rest and rest[0].isdigit() else 20,
+                       next((r for r in rest if not r.isdigit()), None))
+    elif cmd == "drive-search":
+        need(1, "drive-search QUERY [N]")
+        cmd_drive_search(rest[0], int(rest[1]) if len(rest) > 1 else 20)
+    elif cmd == "drive-info":
+        need(1, "drive-info FILE_ID")
+        cmd_drive_info(rest[0])
+    elif cmd == "drive-read":
+        need(1, "drive-read FILE_ID")
+        cmd_drive_read(rest[0])
+    elif cmd == "drive-download":
+        need(1, "drive-download FILE_ID [DEST_DIR_OR_FILE]")
+        cmd_drive_download(rest[0], rest[1] if len(rest) > 1 else None)
+    elif cmd == "drive-upload":
+        need(1, "drive-upload LOCAL_FILE [FOLDER_ID]")
+        cmd_drive_upload(rest[0], rest[1] if len(rest) > 1 else None)
+    elif cmd == "drive-mkdir":
+        need(1, "drive-mkdir NAME [PARENT_FOLDER_ID]")
+        cmd_drive_mkdir(rest[0], rest[1] if len(rest) > 1 else None)
+    elif cmd == "drive-rename":
+        need(2, "drive-rename FILE_ID NEW_NAME")
+        cmd_drive_rename(rest[0], rest[1])
+    elif cmd == "drive-move":
+        need(2, "drive-move FILE_ID FOLDER_ID")
+        cmd_drive_move(rest[0], rest[1])
+    elif cmd == "drive-trash":
+        need(1, "drive-trash FILE_ID")
+        cmd_drive_trash(rest[0])
     elif cmd == "logout":
         cmd_logout()
     elif cmd == "list":

@@ -1,20 +1,22 @@
 ---
 name: gmail-oauth
-description: "Read, search, send and reply to Gmail (Google Workspace) mail via the Gmail API with OAuth2. Use when the user mentions 'gm信箱', 'gm 帳號', 'gm account', gm.cute.edu.tw, or asks to read/search/send Gmail. No App Password or 2-Step Verification needed."
-version: 2.1.1
+description: "gm 帳號 (gm.cute.edu.tw Google Workspace) via OAuth2: read/search/send/reply Gmail AND list/search/read/download/upload/organize Google Drive (雲端硬碟) files. Use when the user mentions 'gm信箱', 'gm 帳號', 'gm 雲端硬碟', 'Google Drive', 'gm drive', gm.cute.edu.tw. No App Password or 2-Step Verification needed."
+version: 2.2.0
 author: shein
 platforms: [windows, linux, macos]
 metadata:
   hermes:
-    tags: [gmail, email, oauth2, gmail-api, google-workspace, gm信箱]
+    tags: [gmail, email, google-drive, drive, oauth2, google-workspace, gm信箱, 雲端硬碟]
     homepage: https://developers.google.com/gmail/api
 ---
 
-# Gmail via OAuth2 (gm 信箱)
+# gm 帳號: Gmail + Google Drive via OAuth2 (gm 信箱 / gm 雲端硬碟)
 
-The team calls this mailbox the **"gm 信箱"**. Any mention of "gm信箱",
-"gm account" or "gm.cute.edu.tw" means this Google Workspace mail — NOT the
-Outlook (cute.edu.tw) mailbox, which is the `outlook-com` skill.
+The team calls this account the **"gm 帳號"**: its mail is the "gm 信箱" and
+its Google Drive is the "gm 雲端硬碟". Any mention of "gm信箱", "gm 雲端硬碟",
+"Google Drive", "gm account" or "gm.cute.edu.tw" means this Google Workspace
+account — NOT the Outlook (cute.edu.tw) mailbox, which is the `outlook-com` skill.
+One authorization covers both Gmail and Drive.
 
 Everything runs through one wrapper that ships with this skill. It finds a
 working Python 3 by itself (Windows Git Bash, WSL, Linux, macOS):
@@ -38,7 +40,9 @@ skill directory, so it survives `hermes skills update`.
 bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" status
 ```
 
-- `Refresh token: present` → go to Step 3.
+- `Refresh token: present` and `Drive: yes` → go to Step 3.
+- `Drive: NO` (authorized by an older version, Gmail only) and the user wants
+  Drive → run `logout`, then Step 2 once.
 - `No token` → Step 2 (one time per gm account / per PC).
 
 ## Step 2 — authorize (first time only)
@@ -79,7 +83,7 @@ tries to open the browser, and keeps listening in the background for 10 minutes.
 
 Never use `urn:ietf:wg:oauth:2.0:oob` — Google has disabled that flow.
 
-## Step 3 — do what the user asked
+## Step 3 — Gmail (gm 信箱)
 
 ```bash
 bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" list                 # newest 10 in Inbox
@@ -96,6 +100,37 @@ bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" reply "someone@cute.edu.tw" THREAD_I
 
 **Always show the user the recipient, subject and body and get a clear "yes"
 before running `send` or `reply`.**
+
+## Step 3b — Google Drive (gm 雲端硬碟)
+
+```bash
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" drive-list                      # 20 most recently modified
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" drive-list 50
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" drive-list FOLDER_ID            # contents of a folder
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" drive-search "課程大綱"          # name or content contains
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" drive-search "mimeType = 'application/pdf' and modifiedTime > '2026-10-01'"
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" drive-info FILE_ID
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" drive-read FILE_ID              # text of Docs/Sheets(CSV)/Slides/txt
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" drive-download FILE_ID          # to ~/Downloads (Docs->docx, Sheets->xlsx, Slides->pptx)
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" drive-download FILE_ID "C:/Users/me/Desktop"
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" drive-upload "C:/path/report.pdf" [FOLDER_ID]
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" drive-mkdir "新資料夾" [PARENT_FOLDER_ID]
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" drive-rename FILE_ID "新名稱"
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" drive-move FILE_ID FOLDER_ID
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" drive-trash FILE_ID             # to trash, recoverable 30 days
+```
+
+- Listings print `ID  MODIFIED  TYPE  SIZE  NAME`; `g-document` / `g-spreadsheet` /
+  `g-presentation` are Google files, `folder` is a folder. Use the ID for other commands.
+- Shared drives (共用雲端硬碟) and files shared with the user are included.
+- `drive-read` only handles text-like files; for PDF/Word/Excel use
+  `drive-download`, then open the saved file with your own file tools.
+- Use forward slashes in Windows paths (`C:/Users/...`) and keep them in quotes.
+- **Before `drive-upload`, `drive-mkdir`, `drive-rename`, `drive-move` or
+  `drive-trash`, tell the user exactly what will change and get a clear "yes".**
+  There is no permanent-delete command on purpose.
+- `DRIVE_SCOPE_MISSING` → this PC was authorized for Gmail only: run `logout`,
+  then Step 2, and ask the user to click Allow again.
 
 ## Gmail search syntax
 
@@ -118,6 +153,8 @@ before running `send` or `reply`.**
 | `Error 400: invalid_request` on Google's page | Old script version — run `hermes skills update gmail-oauth` |
 | `access_denied` / `org_internal` | The user signed in with a non-gm.cute.edu.tw account → sign in with the gm account |
 | `Gmail API error 403 ... has not been used / disabled` | Gmail API disabled in project hermes-gm → tell the IT admin |
+| `Google Drive API is not enabled` | Drive API disabled in project hermes-gm → tell the IT admin |
+| `DRIVE_SCOPE_MISSING` | Authorized before Drive was added → `logout`, then Step 2 |
 | `Python 3 not found` | Install Python once (`winget install Python.Python.3.12`), then retry |
 
 The access token expires every hour and is refreshed automatically.

@@ -5,7 +5,7 @@ Hermes Agent skills for the CUTE (中國科技大學, China University of Techno
 | Skill | What it does |
 |-------|--------------|
 | `outlook-com` | Search / read classic Outlook mail (cute.edu.tw) via PowerShell COM. WSL or Windows. |
-| `gmail-oauth` | Read / search / send / reply gm 信箱 (gm.cute.edu.tw) via Gmail API + OAuth2. |
+| `gmail-oauth` | gm 帳號 (gm.cute.edu.tw): Gmail 讀/搜/寄/回 + Google 雲端硬碟 列出/搜尋/讀取/下載/上傳/整理. One OAuth2 sign-in for both. |
 
 ## 標準流程（每台 PC：移除 → 重新安裝）
 
@@ -24,11 +24,13 @@ hermes skills list
 
 - 前 4 行如果出現 `not found`、`not a hub-installed skill`、`already exists` 都是正常的
   （代表原本就沒有、或是舊版手動複製的），繼續執行下一行即可。
-- 最後 `hermes skills list` 要看到 `outlook-com` 4.x 和 `gmail-oauth` 2.x。
+- 最後 `hermes skills list` 要看到 `outlook-com` 4.x 和 `gmail-oauth` 2.2 以上。
 - 裝完後在 Hermes **開一個新的對話**再使用：
   「幫我查 Outlook 最近三天的信」、「幫我看 gm 信箱有沒有新信」。
 - gm 信箱第一次使用時，agent 會給一個 Google 授權連結：用 gm.cute.edu.tw 帳號登入 → 按「允許」→ 回 agent 說「好了」。
-  token 存在使用者自己的資料夾，移除 / 重新安裝 skill 不需要重新授權。
+  同一次授權包含 gm 信箱和 gm 雲端硬碟。token 存在使用者自己的資料夾，移除 / 重新安裝 skill 不需要重新授權。
+- 在 gmail-oauth 2.2 以前授權過的 PC（只有 Gmail 權限），第一次用雲端硬碟時 agent 會說
+  `DRIVE_SCOPE_MISSING`，跟它說「gm 帳號解除綁定，重新授權」即可（會給新的授權網址）。
 
 ## Install (each PC, once)
 
