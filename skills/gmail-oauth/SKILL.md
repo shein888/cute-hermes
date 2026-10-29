@@ -1,7 +1,7 @@
 ---
 name: gmail-oauth
 description: "gm 帳號 (gm.cute.edu.tw Google Workspace) via OAuth2: read/search/send/reply Gmail AND list/search/read/download/upload/organize Google Drive (雲端硬碟) files. Use when the user mentions 'gm信箱', 'gm 帳號', 'gm 雲端硬碟', 'Google Drive', 'gm drive', gm.cute.edu.tw. No App Password or 2-Step Verification needed."
-version: 2.2.1
+version: 2.2.2
 author: shein
 platforms: [windows, linux, macos]
 metadata:
@@ -99,8 +99,17 @@ Use only these commands to read mail — never write your own Gmail/MIME parsing
 code. If a subject still looks like `=?UTF-8?B?...` the skill is outdated:
 tell the user to update it (README 標準流程).
 
-`list` / `search` print `ID`, `THREAD`, date, sender and subject
-(`*` before the subject = unread). Use ID for `read`, THREAD for `reply`.
+`list` / `search` print one block per message:
+
+```
+[1] 2026-10-28 19:11  (UNREAD)
+    From:    darch darch (透過 Google 試算表) <drive-shares-dm-noreply@google.com>
+    Subject: 有人與你共用了試算表：「個資盤點清冊-建築系115年」
+    ID: 19a2...    THREAD: 19a2...
+```
+
+When you show mail to the user, copy `From` and `Subject` from the **same block**
+— never re-pair them. Use ID for `read`, THREAD for `reply`.
 
 **Always show the user the recipient, subject and body and get a clear "yes"
 before running `send` or `reply`.**

@@ -568,14 +568,17 @@ def _list_messages(query, limit):
 
 
 def _print_rows(rows):
+    """One labelled block per message: no column guessing (CJK / spaces in names break tables)."""
     if not rows:
         print("No messages.")
         return
-    print(f"{'ID':<18}  {'THREAD':<18}  {'DATE':<16}  {'FROM':<35}  SUBJECT")
-    print("─" * 120)
-    for mid, tid, date, frm, subj, unread in rows:
-        mark = "*" if unread else " "
-        print(f"{mid:<18}  {tid:<18}  {date:<16}  {frm[:35]:<35} {mark}{subj[:60]}")
+    print(f"{len(rows)} message(s), newest first:")
+    for i, (mid, tid, date, frm, subj, unread) in enumerate(rows, 1):
+        print()
+        print(f"[{i}] {date}{'  (UNREAD)' if unread else ''}")
+        print(f"    From:    {frm}")
+        print(f"    Subject: {subj}")
+        print(f"    ID: {mid}    THREAD: {tid}")
 
 
 def cmd_list(limit=10):
