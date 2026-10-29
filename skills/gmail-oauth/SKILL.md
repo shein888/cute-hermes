@@ -1,7 +1,7 @@
 ---
 name: gmail-oauth
 description: "gm 帳號 (gm.cute.edu.tw Google Workspace) via OAuth2: read/search/send/reply Gmail AND list/search/read/download/upload/organize Google Drive (雲端硬碟) files. Use when the user mentions 'gm信箱', 'gm 帳號', 'gm 雲端硬碟', 'Google Drive', 'gm drive', gm.cute.edu.tw. No App Password or 2-Step Verification needed."
-version: 2.2.0
+version: 2.2.1
 author: shein
 platforms: [windows, linux, macos]
 metadata:
@@ -94,6 +94,10 @@ bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" read MESSAGE_ID      # headers, atta
 bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" send "someone@cute.edu.tw" "Subject" "Body text"
 bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" reply "someone@cute.edu.tw" THREAD_ID "Reply body"
 ```
+
+Use only these commands to read mail — never write your own Gmail/MIME parsing
+code. If a subject still looks like `=?UTF-8?B?...` the skill is outdated:
+tell the user to update it (README 標準流程).
 
 `list` / `search` print `ID`, `THREAD`, date, sender and subject
 (`*` before the subject = unread). Use ID for `read`, THREAD for `reply`.

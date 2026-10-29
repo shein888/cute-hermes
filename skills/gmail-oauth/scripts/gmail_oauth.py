@@ -530,8 +530,20 @@ def api_post(path, data):
     return _api("POST", path, data)
 
 
+def _decode_header_value(value):
+    """Decode RFC 2047 encoded-words (=?UTF-8?B?...?=) if Gmail left any in a header."""
+    if not value or "=?" not in value:
+        return value
+    try:
+        from email.header import decode_header, make_header
+        return str(make_header(decode_header(value)))
+    except Exception:
+        return value
+
+
 def _headers(msg):
-    return {h["name"].lower(): h["value"] for h in msg.get("payload", {}).get("headers", [])}
+    return {h["name"].lower(): _decode_header_value(h["value"])
+            for h in msg.get("payload", {}).get("headers", [])}
 
 
 def _fmt_date(internal_ms):
