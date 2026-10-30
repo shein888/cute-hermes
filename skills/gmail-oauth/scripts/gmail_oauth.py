@@ -13,6 +13,8 @@ Usage:
   python3 gmail_oauth.py import-code URL # Exchange a pasted callback URL
   python3 gmail_oauth.py status          # Check token status
   python3 gmail_oauth.py logout          # Revoke + delete token (re-bind with setup)
+  python3 gmail_oauth.py new             # Mail arrived since last run (silent if none) — for cron
+  python3 gmail_oauth.py install-watch   # Write $HERMES_HOME/scripts/gm-new-mail.sh for cron
   python3 gmail_oauth.py list [N]        # List inbox (default 10)
   python3 gmail_oauth.py search QUERY [N]
   python3 gmail_oauth.py read MESSAGE_ID
@@ -72,7 +74,7 @@ ENV_FILE = CONF_DIR / "env"
 GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
 DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
 SCOPES = f"{GMAIL_SCOPE} {DRIVE_SCOPE}"
-SKILL_VERSION = "2.3.0"
+SKILL_VERSION = "2.4.0"
 # feature -> scope it needs. To add a feature later (e.g. calendar), add it here and to SCOPES:
 # every PC is then asked once to re-authorize the first time it uses that feature.
 FEATURES = {"gmail": GMAIL_SCOPE, "drive": DRIVE_SCOPE}
@@ -754,6 +756,127 @@ def cmd_status():
     print(f"Token file: {TOKEN_FILE}")
 
 
+# ─── New-mail watch (for a Hermes no-agent cron job) ──────────────────────
+WATCH_FILE = CONF_DIR / "watch.json"
+WATCH_SCRIPT_NAME = "gm-new-mail.sh"
+
+
+def _watch_state():
+    try:
+        return json.loads(WATCH_FILE.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_watch(state):
+    _write_private(WATCH_FILE, state)
+
+
+def _raw_gmail_get(path, token):
+    req = urllib.request.Request(f"{API_BASE}/{path}", headers={"Authorization": f"Bearer {token}"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read() or b"{}")
+
+
+def cmd_new(limit=20):
+    """Print mails that arrived in INBOX since the previous run; print NOTHING when there are none.
+    Built for `hermes cron create ... --no-agent`: empty stdout = silent tick. Never starts an
+    authorization flow and stays quiet on network errors, so a 5-minute schedule cannot spam."""
+    state = _watch_state()
+    token = load_token()
+    if not token or "gmail" not in granted_features(token):
+        if time.time() - state.get("auth_nag_at", 0) > 86400:  # remind at most once a day
+            state["auth_nag_at"] = time.time()
+            _save_watch(state)
+            print("gm 新信通知：這台電腦還沒有 gm 信箱授權。請跟 Hermes 說「幫我看 gm 信箱」完成授權。")
+        return
+    try:
+        if time.time() > token.get("expires_at", 0) - 60:
+            token = refresh_token(token)
+        at = token["access_token"]
+        if not state.get("history_id"):
+            state["history_id"] = _raw_gmail_get("profile", at)["historyId"]  # baseline: start from now
+            state.pop("fail_count", None)
+            _save_watch(state)
+            return
+        added, page = [], None
+        while True:
+            q = {"startHistoryId": state["history_id"], "historyTypes": "messageAdded", "labelId": "INBOX"}
+            if page:
+                q["pageToken"] = page
+            try:
+                h = _raw_gmail_get("history?" + urllib.parse.urlencode(q), at)
+            except urllib.error.HTTPError as e:
+                if e.code == 404:  # history id too old (PC was off for days): restart from now
+                    state["history_id"] = _raw_gmail_get("profile", at)["historyId"]
+                    _save_watch(state)
+                    return
+                raise
+            for rec in h.get("history", []):
+                for m in rec.get("messagesAdded", []):
+                    labels = m.get("message", {}).get("labelIds", [])
+                    if "INBOX" in labels and not {"SPAM", "TRASH", "DRAFT", "SENT"} & set(labels):
+                        added.append(m["message"]["id"])
+            new_hid = h.get("historyId", state["history_id"])
+            page = h.get("nextPageToken")
+            if not page:
+                break
+        state["history_id"] = new_hid
+        state.pop("fail_count", None)
+        ids = list(dict.fromkeys(added))  # de-duplicate, keep order (oldest first)
+        rows = []
+        for mid in ids[-limit:]:
+            try:
+                d = _raw_gmail_get(f"messages/{mid}?format=metadata&metadataHeaders=From"
+                                   "&metadataHeaders=Subject", at)
+            except urllib.error.HTTPError:
+                continue  # deleted meanwhile
+            if "INBOX" not in d.get("labelIds", []):
+                continue
+            hd = _headers(d)
+            rows.append((_fmt_date(d.get("internalDate")), hd.get("from", "(unknown)"),
+                         hd.get("subject", "(no subject)")))
+        _save_watch(state)
+    except (urllib.error.URLError, OSError, KeyError, ValueError, RuntimeError, SystemExit):
+        state["fail_count"] = state.get("fail_count", 0) + 1
+        _save_watch(state)
+        if state["fail_count"] == 12:  # about an hour of failures at 5-minute ticks: say it once
+            print("gm 新信通知：已經連續一小時無法連到 Gmail（網路或授權問題），稍後會自動再試。")
+        return
+    if not rows:
+        return
+    rows.sort()
+    print(f"📬 gm 信箱有 {len(rows)} 封新信" + (f"（共 {len(ids)} 封，只列最新 {limit} 封）" if len(ids) > limit else "") + "：")
+    for i, (date, frm, subj) in enumerate(rows, 1):
+        print(f"\n[{i}] {date}\n    From:    {frm}\n    Subject: {subj}")
+
+
+def _hermes_home():
+    home = os.environ.get("HERMES_HOME", "")
+    if home:
+        return Path(home)
+    local = os.environ.get("LOCALAPPDATA", "")
+    if os.name == "nt" and local:
+        return Path(local) / "hermes"
+    return Path.home() / ".hermes"
+
+
+def cmd_install_watch():
+    """Write $HERMES_HOME/scripts/gm-new-mail.sh (cron scripts must live there) pointing at this skill."""
+    skill_scripts = Path(__file__).resolve().parent
+    wrapper = skill_scripts / "gmail.sh"
+    wpath = str(wrapper).replace("\\", "/")
+    dest = _hermes_home() / "scripts" / WATCH_SCRIPT_NAME
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text("#!/bin/bash\n# gm 新信通知 (cute-hermes gmail-oauth). Prints only when new mail arrived.\n"
+                    f'exec bash "{wpath}" new\n', encoding="utf-8", newline="\n")
+    _save_watch({k: v for k, v in _watch_state().items() if k != "history_id"})  # fresh baseline
+    print(f"[OK] Wrote {dest}")
+    print("Next: create the scheduled job (no-agent, every 5 minutes) with script "
+          f"'{WATCH_SCRIPT_NAME}', e.g.\n"
+          f'  hermes cron create "every 5m" --no-agent --script {WATCH_SCRIPT_NAME} --name gm-new-mail')
+
+
 # ─── Google Drive API ─────────────────────────────────────────────────────
 FOLDER_MIME = "application/vnd.google-apps.folder"
 # Google-native files have no bytes; they are exported. read -> text, download -> Office file.
@@ -1058,6 +1181,10 @@ def main():
         cmd_drive_trash(rest[0])
     elif cmd == "logout":
         cmd_logout()
+    elif cmd == "new":
+        cmd_new(int(rest[0]) if rest else 20)
+    elif cmd == "install-watch":
+        cmd_install_watch()
     elif cmd == "list":
         cmd_list(int(rest[0]) if rest else 10)
     elif cmd == "search":

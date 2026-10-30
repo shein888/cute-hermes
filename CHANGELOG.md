@@ -3,6 +3,7 @@
 各電腦更新方式：照 [使用說明](docs/使用說明.md) 第 1 節重裝，然後開新對話。
 
 ## 2026-10-30
+- **gmail-oauth 2.4.0**：新增「gm 新信通知」：`new` 指令只列出上次檢查後新進收件匣的信；`install-watch` + Hermes 排程（no-agent、每 5 分鐘）主動通知，沒有新信不出聲、不耗 token。
 - 新增 **AGENT-SETUP.md**：一句話叫 agent「檢查 gm 授權／Outlook → 移除 → 重裝 → 驗證 → 請使用者 /new」。
 - **gmail-oauth 2.3.0**：每台電腦記錄 gm 帳號、已授權功能、授權時間；缺權限時自動給授權網址（`REAUTH_REQUIRED`），不需解除綁定。`status` 可查看。
 

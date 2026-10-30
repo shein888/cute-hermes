@@ -74,6 +74,9 @@ Interpret:
 
 ## Step 2 — Remove the old skills
 
+(If a scheduled job named `gm-new-mail` exists, leave it alone — it keeps working
+after the reinstall.)
+
 Before removing anything, send this message:
 
 EXACT TEXT:
@@ -108,7 +111,7 @@ user the exact message, and do **not** send 「已下載並更新完成」.
 In `hermes skills list`, both skills must be listed. Compare their versions with
 the newest entries in
 https://github.com/shein888/cute-hermes/blob/main/CHANGELOG.md
-(at the time of writing: outlook-com 4.1.1, gmail-oauth 2.3.0 or newer).
+(at the time of writing: outlook-com 4.1.1, gmail-oauth 2.4.0 or newer).
 
 ## Step 5 — Report and ask for a new conversation
 
@@ -135,4 +138,5 @@ You cannot start the new conversation yourself — the user must do it.
 - 「gm 授權狀態」 — shows the gm account and permissions.
 - 「把 gm 雲端硬碟最近的檔案列出來」 — first use may give a Google link: sign in with
   the gm account, click 允許, then tell the agent 「好了」.
+- 「gm 有新信要通知我」 — sets up the 5-minute new-mail notice.
 - 「幫我查 Outlook 最近三天的信」 — if it fails: 「執行 outlook-search 的 -Diagnose，告訴我原因」.

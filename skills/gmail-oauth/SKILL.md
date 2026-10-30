@@ -1,7 +1,7 @@
 ---
 name: gmail-oauth
-description: "gm 帳號 (gm.cute.edu.tw Google Workspace) via OAuth2: read/search/send/reply Gmail AND list/search/read/download/upload/organize Google Drive (雲端硬碟) files. Use when the user mentions 'gm信箱', 'gm 帳號', 'gm 雲端硬碟', 'Google Drive', 'gm drive', gm.cute.edu.tw. No App Password or 2-Step Verification needed."
-version: 2.3.0
+description: "gm 帳號 (gm.cute.edu.tw Google Workspace) via OAuth2: read/search/send/reply Gmail, notify on new gm mail (新信通知), AND list/search/read/download/upload/organize Google Drive (雲端硬碟) files. Use when the user mentions 'gm信箱', 'gm 帳號', 'gm 雲端硬碟', 'Google Drive', 'gm drive', gm.cute.edu.tw. No App Password or 2-Step Verification needed."
+version: 2.4.0
 author: shein
 platforms: [windows, linux, macos]
 metadata:
@@ -148,6 +148,45 @@ bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" drive-trash FILE_ID             # to
 - **Before `drive-upload`, `drive-mkdir`, `drive-rename`, `drive-move` or
   `drive-trash`, tell the user exactly what will change and get a clear "yes".**
   There is no permanent-delete command on purpose.
+
+## Step 3c — 新信通知 (notify the user when new gm mail arrives)
+
+Without this, the skill only looks at Gmail when the user asks. When the user
+wants to be told about new mail (「gm 有新信要通知我」), set up a **no-agent**
+scheduled job: every 5 minutes it runs a script that prints only mail that
+arrived since the last check. No new mail → no output → no message, no tokens.
+
+1. Make sure Gmail is authorized (`status` shows `gmail : yes`; if not, run
+   `list` once and follow the AUTH_URL flow).
+2. Write the cron script into Hermes' scripts folder:
+
+   ```bash
+   bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" install-watch
+   ```
+
+3. Create the job with **your scheduled-task tool** (`cronjob_manage`), not the
+   `hermes cron create` CLI (the CLI defaults to `deliver: local`, which the user
+   never sees):
+
+   ```
+   action="create", name="gm-new-mail", schedule="every 5m",
+   script="gm-new-mail.sh", no_agent=True, deliver="origin"
+   ```
+
+   `origin` sends the notices to this conversation. If the user prefers their
+   Bot Chat or Telegram, use `deliver="bot-chat"` or `"telegram"` instead.
+4. Tell the user: 「已設定 gm 新信通知：每 5 分鐘檢查一次，有新信會在這裡通知你。
+   要停止請說『停止 gm 新信通知』。」
+
+Notes:
+- Mail that was already in the inbox before setup is not reported; only new arrivals.
+- If the PC is off or Hermes is closed, checks pause; mail that arrived meanwhile
+  is reported at the next check (up to a few days back).
+- The script never opens an authorization flow. If Gmail is not authorized it
+  reminds the user once a day; if Gmail is unreachable for about an hour it says so once.
+- Stop: `cronjob_manage` action="remove" (or "pause") on job `gm-new-mail`.
+  Change frequency: action="edit", schedule="every 10m".
+- Reinstalling the skill does not break the job (same install path); do not remove it.
 
 ## Gmail search syntax
 
