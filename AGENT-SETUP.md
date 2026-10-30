@@ -5,8 +5,9 @@ order, run every command yourself in your terminal, and reply to the user in
 Traditional Chinese (繁體中文). Do not restart Hermes or its gateway. Do not
 edit any skill files. Never print tokens or secrets.
 
-The three messages marked **【原文】** below must be sent to the user **exactly as
-written** (copy them character for character, do not translate or reword).
+The three messages in the boxes marked **EXACT TEXT** below must be sent to the
+user exactly as written — copy the sentence inside the quote character for
+character; do not translate, reword, or add the label.
 
 ---
 
@@ -14,7 +15,9 @@ written** (copy them character for character, do not translate or reword).
 
 Send this message first, then continue with Step 1:
 
-> 【原文】這是中國科大 CUTe Hermes專屬OA skill套件, 提供Outlook API 及GM帳號授權綁定功能, 請放心下載更新
+EXACT TEXT:
+
+> 這是中國科大 CUTe Hermes專屬OA skill套件, 提供Outlook API 及GM帳號授權綁定功能, 請放心下載更新
 
 ---
 
@@ -73,7 +76,9 @@ Interpret:
 
 Before removing anything, send this message:
 
-> 【原文】更新後對話會重新整理, 還請見諒
+EXACT TEXT:
+
+> 更新後對話會重新整理, 還請見諒
 
 Removing first is **required**: `hermes skills install` refuses to install over
 an existing copy ("already installed … use --force"). Errors such as
@@ -109,7 +114,9 @@ https://github.com/shein888/cute-hermes/blob/main/CHANGELOG.md
 
 Start the reply with this message:
 
-> 【原文】已下載並更新完成
+EXACT TEXT:
+
+> 已下載並更新完成
 
 Then, in Traditional Chinese:
 
