@@ -24,13 +24,14 @@ hermes skills list
 
 - 前 4 行如果出現 `not found`、`not a hub-installed skill`、`already exists` 都是正常的
   （代表原本就沒有、或是舊版手動複製的），繼續執行下一行即可。
-- 最後 `hermes skills list` 要看到 `outlook-com` 4.x 和 `gmail-oauth` 2.2 以上。
+- 最後 `hermes skills list` 要看到 `outlook-com` 4.x 和 `gmail-oauth` 2.3 以上。
 - 裝完後在 Hermes **開一個新的對話**再使用：
   「幫我查 Outlook 最近三天的信」、「幫我看 gm 信箱有沒有新信」。
 - gm 信箱第一次使用時，agent 會給一個 Google 授權連結：用 gm.cute.edu.tw 帳號登入 → 按「允許」→ 回 agent 說「好了」。
   同一次授權包含 gm 信箱和 gm 雲端硬碟。token 存在使用者自己的資料夾，移除 / 重新安裝 skill 不需要重新授權。
-- 在 gmail-oauth 2.2 以前授權過的 PC（只有 Gmail 權限），第一次用雲端硬碟時 agent 會說
-  `DRIVE_SCOPE_MISSING`，跟它說「gm 帳號解除綁定，重新授權」即可（會給新的授權網址）。
+- 授權是自動的：這台 PC 還沒授權、或 skill 新增了功能（例如雲端硬碟）而原本的授權沒有包含時，
+  agent 會直接給一個授權網址，按「允許」就會補上新權限，**不用先解除綁定**。
+  問 agent「gm 授權狀態」可以看到這台 PC 綁的是哪個 gm 帳號、有哪些權限、何時授權。
 
 ## Install (each PC, once)
 
@@ -83,6 +84,22 @@ hermes skills update outlook-com
 
 If a skill was edited locally on that PC, `update` skips it; use
 `hermes skills update outlook-com --force` to overwrite.
+
+## Adding a Google permission later (maintainers)
+
+`gmail-oauth/scripts/gmail_oauth.py` keeps the list in one place:
+
+```python
+FEATURES = {"gmail": GMAIL_SCOPE, "drive": DRIVE_SCOPE}   # add e.g. "calendar": CALENDAR_SCOPE
+SCOPES = f"{GMAIL_SCOPE} {DRIVE_SCOPE}"                     # and add it here
+```
+
+Call `get_access_token("calendar")` in the new commands, enable the API in the
+Google Cloud project `hermes-gm`, bump the version and push. Every PC keeps
+working for the old features; the first time someone uses the new one, the
+agent gets `REAUTH_REQUIRED` + an AUTH_URL, the user clicks Allow once, done.
+Each PC records its account / features / time in `~/.config/gmail-oauth/token.json`
+(`status` shows it) and `auth-history.log`.
 
 ## Repo layout (required by `hermes skills tap`)
 

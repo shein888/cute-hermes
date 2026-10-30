@@ -1,7 +1,7 @@
 ---
 name: gmail-oauth
 description: "gm 帳號 (gm.cute.edu.tw Google Workspace) via OAuth2: read/search/send/reply Gmail AND list/search/read/download/upload/organize Google Drive (雲端硬碟) files. Use when the user mentions 'gm信箱', 'gm 帳號', 'gm 雲端硬碟', 'Google Drive', 'gm drive', gm.cute.edu.tw. No App Password or 2-Step Verification needed."
-version: 2.2.2
+version: 2.3.0
 author: shein
 platforms: [windows, linux, macos]
 metadata:
@@ -34,30 +34,25 @@ into the script. **Do not ask the user for a client ID or secret.**
 The user's token is stored in `~/.config/gmail-oauth/token.json`, outside the
 skill directory, so it survives `hermes skills update`.
 
-## Step 1 — check authorization
+## Authorization is automatic — handle `AUTH_REQUIRED` / `REAUTH_REQUIRED`
 
-```bash
-bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" status
+Just run the command the user needs (Step 3 / 3b). The script records, per PC,
+which gm account authorized which features (gmail, drive) and when. If this PC
+has no authorization yet, or the command needs a feature that was not granted
+before (e.g. Drive after an older Gmail-only setup), the command does NOT run;
+it prints instead (exit code 5):
+
+```
+REAUTH_REQUIRED: lic@gm.cute.edu.tw authorized only gmail; 'drive' needs one more consent ...
+AUTH_URL: https://accounts.google.com/o/oauth2/v2/auth?...
 ```
 
-- `Refresh token: present` and `Drive: yes` → go to Step 3.
-- `Drive: NO` (authorized by an older version, Gmail only) and the user wants
-  Drive → run `logout`, then Step 2 once.
-- `No token` → Step 2 (one time per gm account / per PC).
+Then:
 
-## Step 2 — authorize (first time only)
-
-```bash
-bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" setup
-```
-
-This returns within a few seconds. It prints a line starting with `AUTH_URL:`,
-tries to open the browser, and keeps listening in the background for 10 minutes.
-
-1. **Immediately send the user the full AUTH_URL as a clickable link** and say:
+1. **Send the user the full AUTH_URL as a clickable link** and say:
    「請點這個連結，用 gm.cute.edu.tw 帳號登入並按『允許』，完成後跟我說」.
-   Do this even if the output says the browser was opened.
-2. When the user says they are done (or right away), run:
+   No logout is needed — existing access is kept and the new permission is added.
+2. When the user says done, run:
 
    ```bash
    bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" wait --timeout 120
@@ -65,23 +60,34 @@ tries to open the browser, and keeps listening in the background for 10 minutes.
 
    | exit | meaning |
    |------|---------|
-   | 0 `[OK] Authorized` | Done → Step 3 |
+   | 0 `[OK] Authorized <account> for: drive, gmail` | Re-run the user's original command |
    | 4 `Still waiting` | User has not clicked Allow yet → ask them, run `wait` again |
-   | 2 `No active login` | Timed out → run `setup` again and send the new link |
-   | 1 `ERROR` | Show the message to the user (e.g. wrong account) |
+   | 2 `No active login` | Link expired (10 min) → re-run the original command to get a new link |
+   | 1 `ERROR` | Show the message to the user (e.g. signed in with a non-gm account) |
 
-3. If the browser on the user's side ends on a page that cannot load
-   (`http://127.0.0.1:8765/?state=...&code=...`) — the agent runs on another
-   machine than the browser — ask the user to copy that full address and paste
-   it here, then run:
+3. If the user's browser ends on a page that cannot load
+   (`http://127.0.0.1:.../?state=...&code=...`, the agent runs on another machine),
+   ask for that full address and run:
 
    ```bash
    bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" import-code '<pasted URL>'
    ```
 
-   Only the URL from the **latest** `setup` works.
+Never edit the script's scopes yourself and never use `urn:ietf:wg:oauth:2.0:oob`.
 
-Never use `urn:ietf:wg:oauth:2.0:oob` — Google has disabled that flow.
+### Which account / permissions does this PC have?
+
+```bash
+bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" status
+```
+
+Shows the gm account, `gmail: yes/NOT YET`, `drive: yes/NOT YET`, when and by
+which skill version it was authorized. `~/.config/gmail-oauth/auth-history.log`
+keeps one line per authorization.
+
+To switch to a **different gm account** (only when the user asks):
+`bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" logout`, then run any command and
+send the new AUTH_URL.
 
 ## Step 3 — Gmail (gm 信箱)
 
@@ -142,8 +148,6 @@ bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" drive-trash FILE_ID             # to
 - **Before `drive-upload`, `drive-mkdir`, `drive-rename`, `drive-move` or
   `drive-trash`, tell the user exactly what will change and get a clear "yes".**
   There is no permanent-delete command on purpose.
-- `DRIVE_SCOPE_MISSING` → this PC was authorized for Gmail only: run `logout`,
-  then Step 2, and ask the user to click Allow again.
 
 ## Gmail search syntax
 
@@ -161,22 +165,13 @@ bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" drive-trash FILE_ID             # to
 
 | Output | Meaning / action |
 |--------|------------------|
-| `NO_TOKEN` | Not authorized yet → Step 2 |
-| `invalid_grant` | User revoked access or reset password → Step 2 again |
+| `AUTH_REQUIRED` / `REAUTH_REQUIRED` (exit 5) | Send the AUTH_URL, then `wait` (see above) |
+| `invalid_grant` | User revoked access or reset password → `logout`, then any command gives a new AUTH_URL |
 | `Error 400: invalid_request` on Google's page | Old script version — run `hermes skills update gmail-oauth` |
 | `access_denied` / `org_internal` | The user signed in with a non-gm.cute.edu.tw account → sign in with the gm account |
 | `Gmail API error 403 ... has not been used / disabled` | Gmail API disabled in project hermes-gm → tell the IT admin |
 | `Google Drive API is not enabled` | Drive API disabled in project hermes-gm → tell the IT admin |
-| `DRIVE_SCOPE_MISSING` | Authorized before Drive was added → `logout`, then Step 2 |
 | `Python 3 not found` | Install Python once (`winget install Python.Python.3.12`), then retry |
 
 The access token expires every hour and is refreshed automatically.
 
-To switch to another gm account or start over (only when the user asks, or
-`status` shows `Refresh token: MISSING` / `invalid_grant`):
-
-```bash
-bash "${HERMES_SKILL_DIR}/scripts/gmail.sh" logout
-```
-
-then run Step 2 again.

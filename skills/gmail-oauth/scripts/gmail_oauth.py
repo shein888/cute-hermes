@@ -72,6 +72,11 @@ ENV_FILE = CONF_DIR / "env"
 GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
 DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
 SCOPES = f"{GMAIL_SCOPE} {DRIVE_SCOPE}"
+SKILL_VERSION = "2.3.0"
+# feature -> scope it needs. To add a feature later (e.g. calendar), add it here and to SCOPES:
+# every PC is then asked once to re-authorize the first time it uses that feature.
+FEATURES = {"gmail": GMAIL_SCOPE, "drive": DRIVE_SCOPE}
+AUTH_LOG = Path.home() / ".config" / "gmail-oauth" / "auth-history.log"
 AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_ENDPOINT = os.environ.get("GMAIL_OAUTH_TOKEN_ENDPOINT", "https://oauth2.googleapis.com/token")
 API_BASE = os.environ.get("GMAIL_OAUTH_API_BASE", "https://gmail.googleapis.com/gmail/v1/users/me")
@@ -183,10 +188,33 @@ def refresh_token(token):
     return token
 
 
-def get_access_token():
+def granted_features(token):
+    """Features this PC's token allows. Tokens saved without a scope list (very old) were Gmail-only."""
+    if not token:
+        return set()
+    scopes = set((token.get("scope") or "").split())
+    if not scopes:
+        return {"gmail"}
+    return {f for f, sc in FEATURES.items() if sc in scopes}
+
+
+def _start_reauth(marker, reason):
+    """Print a machine-readable marker, start the consent flow (AUTH_URL + background listener), exit 5."""
+    print(f"{marker}: {reason}", flush=True)
+    print("[..] Starting authorization — give the AUTH_URL below to the user, then run `wait`.", flush=True)
+    oauth_setup(timeout=600)
+    sys.exit(5)
+
+
+def get_access_token(feature=None):
     token = load_token()
     if not token or "access_token" not in token:
-        _die("NO_TOKEN: Gmail is not authorized yet. Run the skill's setup command")
+        _start_reauth("AUTH_REQUIRED", "this PC has no gm authorization yet")
+    if feature and feature not in granted_features(token):
+        who = token.get("account") or "this gm account"
+        _start_reauth("REAUTH_REQUIRED",
+                      f"{who} authorized only {', '.join(sorted(granted_features(token))) or 'nothing'}; "
+                      f"'{feature}' needs one more consent (the existing access is kept)")
     if time.time() > token.get("expires_at", 0) - 60:
         if not token.get("refresh_token"):
             _die("Token expired and no refresh token. Re-run the setup command")
@@ -282,14 +310,35 @@ def _exchange_code(code, pending):
     old = load_token() or {}
     if not token.get("refresh_token") and old.get("refresh_token"):
         token["refresh_token"] = old["refresh_token"]
+    token["account"] = _fetch_account(token["access_token"]) or old.get("account", "")
+    token["authorized_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    token["authorized_by_skill"] = SKILL_VERSION
     save_token(token)
     try:
         PENDING_FILE.unlink()
     except OSError:
         pass
-    print(f"[OK] Authorized. Token saved to {TOKEN_FILE}")
+    feats = ",".join(sorted(granted_features(token)))
+    try:
+        with open(AUTH_LOG, "a", encoding="utf-8") as log:
+            log.write(f"{token['authorized_at']}  {token['account'] or '?'}  {feats}  skill {SKILL_VERSION}\n")
+    except OSError:
+        pass
+    print(f"[OK] Authorized {token['account'] or '(account unknown)'} for: {feats}")
+    if old.get("account") and token["account"] and old["account"] != token["account"]:
+        print(f"[!!] Account changed: {old['account']} -> {token['account']}")
     print("     Refresh token: " + ("present (auto-refresh works)" if token.get("refresh_token")
                                     else "MISSING — revoke app access and run setup again"))
+
+
+def _fetch_account(access_token):
+    """E-mail address of the authorized account (Gmail profile), or '' if unavailable."""
+    req = urllib.request.Request(f"{API_BASE}/profile", headers={"Authorization": f"Bearer {access_token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return json.loads(resp.read()).get("emailAddress", "")
+    except Exception:
+        return ""
 
 
 LISTENER_FILE = CONF_DIR / "listener.json"
@@ -462,8 +511,9 @@ def wait_for_auth(timeout=120):
                 info = {}
         status = info.get("status")
         if status == "done":
-            print("[OK] Authorized. Refresh token: "
-                  + ("present" if (load_token() or {}).get("refresh_token") else "MISSING"))
+            t = load_token() or {}
+            print(f"[OK] Authorized {t.get('account') or ''} for: {', '.join(sorted(granted_features(t)))}. "
+                  "Now re-run the user's original request.")
             return 0
         if status == "error":
             print(f"ERROR: {info.get('message')}", file=sys.stderr)
@@ -512,7 +562,7 @@ def _api(method, path, payload=None):
         f"{API_BASE}/{path}",
         data=json.dumps(payload).encode() if payload is not None else None,
         method=method,
-        headers={"Authorization": f"Bearer {get_access_token()}",
+        headers={"Authorization": f"Bearer {get_access_token('gmail')}",
                  "Content-Type": "application/json"},
     )
     try:
@@ -681,17 +731,27 @@ def cmd_logout():
 
 def cmd_status():
     token = load_token()
+    print(f"Skill version: {SKILL_VERSION}")
     if not token:
-        print("No token. Run the skill's setup command")
+        print("Authorized: NO — the first gm command will print an AUTH_URL to approve")
         return
-    print(f"Token file: {TOKEN_FILE}")
+    if not token.get("account") and "gmail" in granted_features(token):
+        try:
+            token["account"] = _fetch_account(get_access_token())
+            if token["account"]:
+                save_token({**load_token(), "account": token["account"]})
+        except SystemExit:
+            pass
+    have = granted_features(token)
+    print(f"Account: {token.get('account') or 'unknown'}")
+    print(f"Authorized at: {token.get('authorized_at') or 'unknown (older skill version)'}"
+          f"   by skill {token.get('authorized_by_skill') or '< 2.3.0'}")
+    for f in FEATURES:
+        print(f"  {f:<6}: " + ("yes" if f in have else "NOT YET — will ask for consent on first use"))
     remaining = int(token.get("expires_at", 0) - time.time())
     print("Access token: " + (f"valid for {remaining}s" if remaining > 0 else "expired (auto-refreshes on next call)"))
     print("Refresh token: " + ("present (auto-refresh works)" if token.get("refresh_token") else "MISSING"))
-    scope = token.get("scope", "")
-    print(f"Scope: {scope or '?'}")
-    print("Gmail: " + ("yes" if "gmail" in scope else "unknown"))
-    print("Drive: " + ("yes" if "auth/drive" in scope else "NO — run logout, then setup, to add Drive"))
+    print(f"Token file: {TOKEN_FILE}")
 
 
 # ─── Google Drive API ─────────────────────────────────────────────────────
@@ -715,19 +775,11 @@ FILE_FIELDS = "id,name,mimeType,size,modifiedTime,parents,webViewLink,owners(dis
 _ALL_DRIVES = {"supportsAllDrives": "true"}
 
 
-def _require_drive_scope():
-    token = load_token()
-    if token and token.get("scope") and "auth/drive" not in token["scope"]:
-        _die("DRIVE_SCOPE_MISSING: this PC authorized Gmail only (older version).\n"
-             "Re-authorize once: run the skill's `logout`, then `setup`, and let the user click Allow again.")
-
-
 def _drive(method, path, params=None, body=None, data=None, content_type=None, base=None, raw=False):
-    _require_drive_scope()
     url = f"{base or DRIVE_BASE}/{path}"
     if params:
         url += "?" + urllib.parse.urlencode(params)
-    headers = {"Authorization": f"Bearer {get_access_token()}"}
+    headers = {"Authorization": f"Bearer {get_access_token('drive')}"}
     if body is not None:
         data = json.dumps(body).encode()
         content_type = "application/json; charset=UTF-8"
@@ -740,7 +792,7 @@ def _drive(method, path, params=None, body=None, data=None, content_type=None, b
     except urllib.error.HTTPError as e:
         detail = e.read().decode(errors="replace")[:500]
         if e.code == 403 and ("insufficient" in detail.lower() or "scope" in detail.lower()):
-            _die("DRIVE_SCOPE_MISSING: token has no Drive permission. Run `logout`, then `setup`.")
+            _start_reauth("REAUTH_REQUIRED", "Google says this token has no Drive permission")
         if e.code == 403 and ("accessNotConfigured" in detail or "has not been used" in detail):
             _die("Google Drive API is not enabled in project hermes-gm — tell the IT admin.")
         if e.code == 404:
