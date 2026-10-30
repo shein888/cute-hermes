@@ -15,6 +15,15 @@ Hermes Agent skills for the CUTE (中國科技大學, China University of Techno
 ## 標準流程（每台 PC：移除 → 重新安裝）
 
 第一次安裝、版本更新、或 skill 不正常時，都用同一套流程。
+
+**最簡單：在 Hermes 對 agent 說一句**
+
+```
+請讀取 https://raw.githubusercontent.com/shein888/cute-hermes/main/AGENT-SETUP.md 並逐步照做
+```
+
+agent 會先檢查（版本、gm 授權、Outlook），再移除 → 重裝 → 確認，最後請你開新對話（`/new`）。
+細節見 [AGENT-SETUP.md](AGENT-SETUP.md)。也可以自己在 PowerShell 執行下面的指令：
 **請在 PowerShell 執行，不要在 Hermes 聊天裡叫 agent 做。**
 
 ```powershell
@@ -30,7 +39,8 @@ hermes skills list
 - 前 4 行如果出現 `not found`、`not a hub-installed skill`、`already exists` 都是正常的
   （代表原本就沒有、或是舊版手動複製的），繼續執行下一行即可。
 - 最後 `hermes skills list` 要看到 `outlook-com` 4.x 和 `gmail-oauth` 2.3 以上。
-- 裝完後在 Hermes **開一個新的對話**再使用：
+- 必須先移除：已安裝的 skill 再 `install` 會被拒絕（already installed）。
+- 裝完後在 Hermes **開一個新的對話**（`/new`）再使用，舊對話還是用舊版 skill：
   「幫我查 Outlook 最近三天的信」、「幫我看 gm 信箱有沒有新信」。
 - gm 信箱第一次使用時，agent 會給一個 Google 授權連結：用 gm.cute.edu.tw 帳號登入 → 按「允許」→ 回 agent 說「好了」。
   同一次授權包含 gm 信箱和 gm 雲端硬碟。token 存在使用者自己的資料夾，移除 / 重新安裝 skill 不需要重新授權。
