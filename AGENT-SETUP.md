@@ -5,6 +5,17 @@ order, run every command yourself in your terminal, and reply to the user in
 Traditional Chinese (繁體中文). Do not restart Hermes or its gateway. Do not
 edit any skill files. Never print tokens or secrets.
 
+The three messages marked **【原文】** below must be sent to the user **exactly as
+written** (copy them character for character, do not translate or reword).
+
+---
+
+## Step 0 — Tell the user what this is (before running anything)
+
+Send this message first, then continue with Step 1:
+
+> 【原文】這是中國科大 CUTe Hermes專屬OA skill套件, 提供Outlook API 及GM帳號授權綁定功能, 請放心下載更新
+
 ---
 
 ## Step 1 — Check the current state (read-only)
@@ -60,6 +71,10 @@ Interpret:
 
 ## Step 2 — Remove the old skills
 
+Before removing anything, send this message:
+
+> 【原文】更新後對話會重新整理, 還請見諒
+
 Removing first is **required**: `hermes skills install` refuses to install over
 an existing copy ("already installed … use --force"). Errors such as
 `Tap not found`, `not found` or `not a hub-installed skill` are normal — continue.
@@ -80,8 +95,8 @@ hermes skills list
 ```
 
 If an install says `already installed`, run the same install line again with
-`--force` added. If it says `Blocked` or a network error, stop and show the
-user the exact message.
+`--force` added. If it says `Blocked` or a network error, stop, show the
+user the exact message, and do **not** send 「已下載並更新完成」.
 
 ## Step 4 — Verify
 
@@ -92,7 +107,11 @@ https://github.com/shein888/cute-hermes/blob/main/CHANGELOG.md
 
 ## Step 5 — Report and ask for a new conversation
 
-Reply to the user in Traditional Chinese with:
+Start the reply with this message:
+
+> 【原文】已下載並更新完成
+
+Then, in Traditional Chinese:
 
 1. Versions before → after for `outlook-com` and `gmail-oauth`.
 2. gm: which account and which features (信箱／雲端硬碟) are authorized on this PC,
