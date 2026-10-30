@@ -7,6 +7,11 @@ Hermes Agent skills for the CUTE (中國科技大學, China University of Techno
 | `outlook-com` | Search / read classic Outlook mail (cute.edu.tw) via PowerShell COM. WSL or Windows. |
 | `gmail-oauth` | gm 帳號 (gm.cute.edu.tw): Gmail 讀/搜/寄/回 + Google 雲端硬碟 列出/搜尋/讀取/下載/上傳/整理. One OAuth2 sign-in for both. |
 
+📘 **說明文件**
+- [使用說明（給使用者）](docs/使用說明.md)：安裝／更新、怎麼跟 agent 說、gm 授權、常見問題
+- [管理者說明](docs/管理者說明.md)：Google Cloud 設定紀錄、修改 skill 的規則、新增權限
+- [CHANGELOG](CHANGELOG.md)：各版本改了什麼
+
 ## 標準流程（每台 PC：移除 → 重新安裝）
 
 第一次安裝、版本更新、或 skill 不正常時，都用同一套流程。
